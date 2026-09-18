@@ -2,6 +2,14 @@ import { callRestaurant, restaurantTool } from "./restaurant.js";
 import { gmailSearchTool, runGmailSearch } from "./gmailSearch.js";
 import { addCalendarEventTool, runAddCalendarEvent } from "./calendarEvent.js";
 import { executeComposioTool } from "../services/composio.js";
+import { addLocalTimes } from "./localTimes.js";
+import {
+  checkBackgroundTasksTool,
+  cancelBackgroundTaskTool,
+  runCheckBackgroundTasks,
+  runCancelBackgroundTask,
+} from "./backgroundTasks.js";
+import { env } from "../config.js";
 
 /**
  * Anthropic's built-in web search tool. Unlike the tools below, this one runs
@@ -24,7 +32,14 @@ const webSearchTool = {
 // toolkit tool, so it's listed here as a static tool the same way
 // call_restaurant is, and composio.ts's CURATED_TOOLS.GMAIL no longer
 // includes GMAIL_FETCH_EMAILS.
-export const staticTools = [webSearchTool, restaurantTool, gmailSearchTool, addCalendarEventTool];
+export const staticTools = [
+  webSearchTool,
+  restaurantTool,
+  gmailSearchTool,
+  addCalendarEventTool,
+  checkBackgroundTasksTool,
+  cancelBackgroundTaskTool,
+];
 
 /** Tool names/prefixes that represent a "real world" action worth talking over. */
 const SLOW_STATIC_TOOLS = new Set(["call_restaurant", "search_gmail", "add_calendar_event"]);
@@ -77,10 +92,18 @@ export async function executeTool(name: string, input: any, ctx: { userId: strin
       return runGmailSearch(input, ctx);
     case "add_calendar_event":
       return runAddCalendarEvent(input, ctx);
-    default:
+    case "check_background_tasks":
+      return runCheckBackgroundTasks(ctx);
+    case "cancel_background_task":
+      return runCancelBackgroundTask(input, ctx);
+    default: {
       // Anything not defined above is assumed to be a Composio-provided tool
       // (e.g. GMAIL_SEND_EMAIL, GOOGLECALENDAR_CREATE_EVENT). web_search never
       // lands here — Anthropic resolves it server-side before we see a response.
-      return executeComposioTool(ctx.userId, name, input);
+      const result = await executeComposioTool(ctx.userId, name, input);
+      // Canvas dates are all raw UTC — see localTimes.ts for the bug this fixes.
+      if (name.toUpperCase().startsWith("CANVAS")) return addLocalTimes(result, ctx.timezone || env.TIMEZONE);
+      return result;
+    }
   }
 }

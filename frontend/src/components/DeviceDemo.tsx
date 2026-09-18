@@ -5,7 +5,7 @@ import { NovaOrb } from "./NovaOrb";
 import { TranscriptPanel } from "./TranscriptPanel";
 
 export function DeviceDemo() {
-  const { state, log, level, longTaskActive, plugIn, unplug, orbTap, wakeWordSupported, wakeWordEngine, porcupineError } =
+  const { state, log, level, taskLight, plugIn, unplug, orbTap, wakeWordSupported, wakeWordEngine, porcupineError } =
     useNovaConversation();
   const [showTranscript, setShowTranscript] = useState(false);
 
@@ -29,7 +29,7 @@ export function DeviceDemo() {
         </p>
       </div>
 
-      <NovaOrb state={state} level={level} onTap={orbTap} longTaskActive={longTaskActive} />
+      <NovaOrb state={state} level={level} onTap={orbTap} taskLight={taskLight} />
 
       {state === "off" && (
         <p className="text-xs text-white/35 -mt-2">Click the orb to plug Nova in and grant microphone access.</p>

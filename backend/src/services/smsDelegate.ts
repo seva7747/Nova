@@ -1,6 +1,6 @@
 import { runConversationTurn, describeConversationError } from "./llm.js";
 import { getComposioTools, getAccountsByToolkit } from "./composio.js";
-import { startTask, finishTask } from "./tasks.js";
+import { startTask, finishTask, recordProgress, actionsSince, type Task } from "./tasks.js";
 import { staticTools, buildFillerText } from "../tools/index.js";
 import { sendSms } from "./sms.js";
 import { db } from "./db.js";
@@ -8,7 +8,7 @@ import { db } from "./db.js";
 const MAX_BACKGROUND_STEPS = 12; // same cap/reasoning as liveDelegate.ts
 
 type QueueItem = { type: "user"; text: string } | { type: "continue"; step: number };
-type Session = { messages: any[]; queue: QueueItem[]; draining: boolean };
+type Session = { messages: any[]; queue: QueueItem[]; draining: boolean; task?: Task };
 
 // Keyed by phone number (== userId everywhere else). Deliberately in-memory,
 // matching this project's other per-process state (composio.ts's caches,
@@ -73,7 +73,8 @@ async function handleUserText(phoneNumber: string, session: Session, text: strin
     console.log(`[sms] turn for ${phoneNumber} answered in ${Date.now() - turnStart}ms → "${finalText}"`);
 
     if (needsMoreWork) {
-      startTask(phoneNumber, text);
+      session.task = startTask(phoneNumber, text);
+      recordProgress(session.task, actionsSince(session.messages, beforeTurn));
       session.queue.push({ type: "continue", step: 1 });
       void drainQueue(phoneNumber, session);
     }
@@ -89,6 +90,13 @@ async function handleUserText(phoneNumber: string, session: Session, text: strin
 
 /** One round of an in-progress background task (see llm.ts's needsMoreWork). Mirrors liveDelegate.ts's continueBackgroundStep. */
 async function continueBackgroundStep(phoneNumber: string, session: Session, step: number) {
+  const task = session.task;
+  if (!task) return;
+  if (task.cancelRequested) {
+    // The cancel_background_task tool already confirmed this in its own reply text.
+    finishTask(task, "cancelled", `Cancelled after ${task.actions.length} action(s).`, true);
+    return;
+  }
   try {
     const [composioTools, accountsByToolkit] = await Promise.all([
       getComposioTools(phoneNumber),
@@ -96,14 +104,17 @@ async function continueBackgroundStep(phoneNumber: string, session: Session, ste
     ]);
     const tools = [...staticTools, ...composioTools];
 
+    const before = session.messages.length;
     const { finalText, messages: updated, needsMoreWork } = await runConversationTurn({
       messages: session.messages,
       tools,
       userId: phoneNumber,
       accountsByToolkit,
       onSlowTool: async () => {}, // no one's actively waiting on this step
+      shouldStop: () => task.cancelRequested,
     });
     session.messages = updated;
+    recordProgress(task, actionsSince(updated, Math.min(before, updated.length)));
 
     if (needsMoreWork && step < MAX_BACKGROUND_STEPS) {
       session.queue.push({ type: "continue", step: step + 1 });
@@ -112,13 +123,13 @@ async function continueBackgroundStep(phoneNumber: string, session: Session, ste
     }
 
     const report = needsMoreWork ? `I got through as much as I could, but couldn't finish everything: ${finalText}` : finalText;
-    finishTask(phoneNumber, report);
+    finishTask(task, "done", report, true); // texted right away below, so nothing to save for a "by the way"
     await sendSms(phoneNumber, report);
     console.log(`[sms] background task for ${phoneNumber} finished after ${step} step(s)`);
   } catch (err: any) {
     console.error(`[sms] background task for ${phoneNumber} failed at step ${step}:`, err?.message ?? err);
     const description = describeConversationError(err, "Sorry, I ran into a problem partway through that — some of it may not have gotten done.");
-    finishTask(phoneNumber, description);
+    finishTask(task, "failed", description, true);
     await sendSms(phoneNumber, description).catch(() => {});
   }
 }

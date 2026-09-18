@@ -1,4 +1,4 @@
-import type { NovaState } from "../hooks/useNovaConversation";
+import type { NovaState, TaskLight } from "../hooks/useNovaConversation";
 
 const STATE_LABEL: Record<NovaState, string> = {
   off: "Tap to plug in",
@@ -94,14 +94,19 @@ export function NovaOrb({
   level = 0,
   onTap,
   size = 220,
-  longTaskActive = false,
+  taskLight = "none",
 }: {
   state: NovaState;
   level?: number;
   onTap?: () => void;
   size?: number;
-  /** A background task (see backend/src/services/tasks.ts) is running — overlays a moving yellow band regardless of the current state, since the task can keep going through several state changes (and even after the orb goes back to idle). */
-  longTaskActive?: boolean;
+  /**
+   * Background-task light (see backend/src/services/tasks.ts), layered around
+   * whatever the current state's own ring is doing since a task outlives any
+   * one state: a smooth yellow pulse while it runs, steady green once it's
+   * done — until Nova mentions it as a "by the way" on the next question.
+   */
+  taskLight?: TaskLight;
 }) {
   const ringScale = state === "recording" ? 1 + level * 0.3 : 1;
   const interactive = state === "off" || state === "wake-listening" || state === "live-idle";
@@ -147,8 +152,14 @@ export function NovaOrb({
         {state === "thinking" && <ChaseRing size={size * 1.08} duration="0.65s" arcWidth={22} />}
         {state === "speaking" && <ChaseRing size={size * 1.08} duration="3.2s" arcWidth={45} />}
 
-        {/* a background task (e.g. "mark every court holiday this year") is running — a distinct moving yellow band, layered on top of whatever the current state's own ring is doing, since the task outlives any one state */}
-        {longTaskActive && <ChaseRing size={size * 1.22} duration="1.4s" arcWidth={35} colors="#fde047, #f59e0b, #fde047" />}
+        {/* background-task light: yellow pulse while running, green when done */}
+        {taskLight !== "none" && (
+          <span
+            key={taskLight}
+            className={`absolute rounded-full pointer-events-none ${taskLight === "running" ? "nova-task-running" : "nova-task-done"}`}
+            style={{ width: size * 1.24, height: size * 1.24 }}
+          />
+        )}
 
         {/* recording ring also reacts to live mic volume */}
         {state === "recording" && (
@@ -181,9 +192,20 @@ export function NovaOrb({
         </span>
       </button>
 
-      <div className="text-sm font-medium text-white/60 tracking-wide flex items-center gap-1.5">
-        {longTaskActive && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />}
-        {longTaskActive ? "Working on a bigger task..." : STATE_LABEL[state]}
+      <div className="flex flex-col items-center gap-1">
+        <div className="text-sm font-medium text-white/60 tracking-wide">{STATE_LABEL[state]}</div>
+        {taskLight === "running" && (
+          <div className="text-xs text-amber-300/80 flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-300 animate-pulse" />
+            Working in the background — keep asking
+          </div>
+        )}
+        {taskLight === "done" && (
+          <div className="text-xs text-emerald-300/85 flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            Background task done — I'll fill you in next time you ask
+          </div>
+        )}
       </div>
     </div>
   );

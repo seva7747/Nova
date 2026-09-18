@@ -160,3 +160,51 @@ body {
   background: rgba(255, 255, 255, 0.12);
   border-radius: 999px;
 }
+
+/* Background-task light around the orb (see NovaOrb's taskLight): a slow,
+   smooth yellow breathe while a task runs, a steady green once it's done. */
+@keyframes nova-task-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+    box-shadow: 0 0 18px 2px rgba(250, 204, 21, 0.25);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.035);
+    box-shadow: 0 0 36px 8px rgba(250, 204, 21, 0.45);
+  }
+}
+
+@keyframes nova-task-done-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.nova-task-running {
+  border: 3px solid rgba(253, 224, 71, 0.9);
+  animation: nova-task-pulse 2.4s ease-in-out infinite;
+}
+
+.nova-task-done {
+  border: 3px solid rgba(52, 211, 153, 0.95);
+  box-shadow: 0 0 30px 6px rgba(52, 211, 153, 0.35);
+  animation: nova-task-done-in 0.6s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nova-task-running {
+    animation: none;
+    opacity: 1;
+  }
+  .nova-task-done {
+    animation: none;
+  }
+}

@@ -9,6 +9,8 @@ import { fetchTaskStatus } from "../lib/api";
 // "wake-listening" (no paid session open yet, only the free local wake-word
 // detector is running) so the two mic consumers never fight over the mic.
 export type NovaState = "off" | "powering-on" | "wake-listening" | "live-idle" | "recording" | "thinking" | "speaking";
+/** Background-task indicator: "running" = yellow pulse, "done" = green until Nova mentions it. */
+export type TaskLight = "none" | "running" | "done";
 export type LogEntry = { id: string; role: "user" | "nova" | "system"; text: string };
 
 function makeId() {
@@ -38,7 +40,7 @@ export function useNovaConversation() {
   const liveNovaEntryIdRef = useRef<string | null>(null);
   const liveNovaSpeakingTimerRef = useRef<number | undefined>(undefined);
   const liveThinkingToIdleTimerRef = useRef<number | undefined>(undefined);
-  const [longTaskActive, setLongTaskActive] = useState(false);
+  const [taskLight, setTaskLight] = useState<TaskLight>("none");
 
   const pushLog = useCallback((entry: Omit<LogEntry, "id">) => {
     setLog((l) => [...l.slice(-40), { ...entry, id: makeId() }]);
@@ -55,19 +57,23 @@ export function useNovaConversation() {
   const stateRef = useRef(state);
   stateRef.current = state;
   useEffect(() => {
-    let wasActive = false;
+    let wasDone = false;
     const poll = async () => {
       if (stateRef.current === "off") {
-        setLongTaskActive(false);
+        setTaskLight("none");
         return;
       }
       const status = await fetchTaskStatus();
       if (!status) return;
-      setLongTaskActive(status.active);
-      if (wasActive && !status.active && status.result) {
-        pushLog({ role: "system", text: `✅ Finished: ${status.result}` });
+      // Yellow while anything's running; green once it's finished but Nova
+      // hasn't mentioned it yet — it clears when the next question's "by
+      // the way" picks it up (backend takes it then).
+      setTaskLight(status.active ? "running" : status.done ? "done" : "none");
+      const isDone = Boolean(status.done);
+      if (isDone && !wasDone && status.result) {
+        pushLog({ role: "system", text: `✅ Finished in the background: ${status.result}` });
       }
-      wasActive = status.active;
+      wasDone = isDone;
     };
     poll();
     const interval = window.setInterval(poll, 2500);
@@ -229,7 +235,7 @@ export function useNovaConversation() {
     state,
     log,
     level,
-    longTaskActive,
+    taskLight,
     plugIn,
     unplug,
     beginCommand,

@@ -70,7 +70,15 @@ export async function fetchHealth(): Promise<NovaHealth | null> {
   }
 }
 
-export type TaskStatus = { active: boolean; description?: string; result?: string };
+/** `active` = a task is running (yellow); `done` = one finished and Nova hasn't mentioned it yet (green). */
+export type TaskStatus = {
+  active: boolean;
+  runningCount?: number;
+  description?: string;
+  actionsCompleted?: number;
+  done?: boolean;
+  result?: string;
+};
 
 /** Polled while plugged in to drive the "working on something big" orb state — see backend/src/services/tasks.ts. */
 export async function fetchTaskStatus(): Promise<TaskStatus | null> {

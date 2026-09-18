@@ -62,7 +62,8 @@ Rules for how you talk:
 - You have a web_search tool for anything current, changing, or outside your training data — weather, sports scores/schedules, news, prices, "who won last night," etc. Always search rather than guess for these; a wrong guess about live information is worse than a one-second search. For established facts, math, or normal conversation, just answer directly without searching.
 - You also have a tool to call a restaurant and book a table, tools for Gmail search/send/reply, and tools for whichever other services the user has connected through the Connectors page — that list varies per user and can be any of roughly 1,500 possible services (Calendar, Drive, Slack, Notion, Todoist, WhatsApp, Spotify, and many more), not a fixed set, so go by whatever tools are actually available to you in a given conversation rather than assuming a specific list. Only call a tool when the request actually needs it. WhatsApp (when connected) can only send messages, not read them — if asked to check WhatsApp messages, say that isn't something you can do rather than guessing.
 - For anything about Gmail — searching, counting, "did I get an email from X," "how many yesterday" — always use search_gmail, never try to guess at Gmail's raw search syntax or do date-range math yourself. Say what you mean in its terms (sinceDaysAgo/untilDaysAgo as plain small numbers — 0 = today, 1 = yesterday, 7 = a week ago; onlyReceived defaults to true) and it handles timezones and query-building correctly. For a count, use returnedCount when countIsExact is true — that's a real, complete count. totalMatching is Gmail's own rough ESTIMATE and can be badly wrong (confirmed: 201 vs a true 49) — only fall back to it, and call it approximate out loud, when countIsExact is false and fetching everything genuinely isn't practical. Leave includeContent false unless you actually need to read what's inside specific emails — it's faster and more reliable that way. If a name search comes back empty, Gmail matches text not phonetics — ask the user to confirm the spelling before concluding there's nothing. Never state a specific date, sender, or detail that isn't literally in the returned data — if you're summarizing many messages, describe what's actually there, don't invent or extrapolate examples.
-- For Canvas (school courses/assignments/grades), figure out course/assignment ids by calling the list tools first (e.g. CANVAS_LIST_COURSES) rather than guessing them — nearly every per-course Canvas tool needs a real numeric id, not a course name. A grade, score, or due date is exactly the kind of thing that's actively harmful to get wrong — never state one that isn't literally in a tool's returned data, and never round, estimate, or infer one from partial information.
+- For Canvas (school courses/assignments/grades), figure out course/assignment ids by calling the list tools first (e.g. CANVAS_LIST_COURSES) rather than guessing them — nearly every per-course Canvas tool needs a real numeric id, not a course name. A grade, score, or due date is exactly the kind of thing that's actively harmful to get wrong — never state one that isn't literally in a tool's returned data, and never round, estimate, or infer one from partial information. Canvas's raw timestamps (due_at, lock_at, etc.) are UTC and will be the wrong day and hour if read directly — every one comes with a matching *_local field (e.g. due_at_local: "Thursday, Sep 17, 11:59 PM PDT (today)") already converted to the user's time; always say that one, and use its (today)/(tomorrow) tag for "tonight"/"due tomorrow" rather than working it out yourself.
+- Before acting on "all" or "every" item of something (delete all my events today, mark every holiday, archive all these emails), make sure you actually have the COMPLETE list first — list tools return results in pages, so if a result includes a nextPageToken (or similar) keep fetching until there isn't one, and ask for a large maxResults. For "today"/"tomorrow" ranges on the calendar, use the user's local midnight-to-midnight with their UTC offset (timeMin/timeMax), never UTC midnight. Missing items silently is worse than taking an extra second.
 - To add anything to the calendar, always use add_calendar_event, never GOOGLECALENDAR_CREATE_EVENT directly — it checks for an existing same-titled event on that date first and skips creating it again, so a repeated or re-run bulk request (e.g. marking a list of holidays) never creates duplicates. Omit startTime for an all-day marker (holidays, reminders) — that's the normal case; only set it for an actual timed event. Whenever the user gives (or implies) an end time — a class, a meeting, anything with a real duration — pass endTime, not durationMinutes; endTime is the reliable one for anything longer than an hour.
 - Composio-backed tools and the restaurant tool represent real, slower actions. Go ahead and call them as soon as you have what you need — the app already tells the user you're working on it, so you don't need to add filler text like "give me a moment" yourself. Just answer normally once the tool result comes back.
 - When one request needs several separate actions (e.g. "add all of these to my calendar" for a whole list of items), call the tool once per item, one at a time across as many turns as it takes, rather than trying to fit many calls into a single response — that's both more reliable and lets you confirm progress as you go.
@@ -178,6 +179,14 @@ type ConversationTurnArgs = {
   timezone?: string;
   accountsByToolkit?: AccountsByToolkit;
   onSlowTool: (block: { name: string; input: any }) => Promise<void>;
+  /**
+   * Checked before every round of tool calls — returning true stops here
+   * (same resumable "paused" exit as hitting the round cap). CONFIRMED BY
+   * TESTING: cancel used to be checked only between whole background steps,
+   * and a bulk calendar delete fit in ONE step — the user said "cancel",
+   * Nova said it stopped, and the task went on to delete 65 events anyway.
+   */
+  shouldStop?: () => boolean;
 };
 
 /**
@@ -202,7 +211,7 @@ export function describeConversationError(err: any, fallback = "Sorry, something
   return fallback;
 }
 
-export async function runConversationTurn({ messages, tools, userId, timezone, accountsByToolkit, onSlowTool }: ConversationTurnArgs) {
+export async function runConversationTurn({ messages, tools, userId, timezone, accountsByToolkit, onSlowTool, shouldStop }: ConversationTurnArgs) {
   if (!env.ANTHROPIC_API_KEY) {
     return {
       finalText: "Nova's brain isn't hooked up yet — add ANTHROPIC_API_KEY to backend/.env.",
@@ -241,7 +250,7 @@ export async function runConversationTurn({ messages, tools, userId, timezone, a
   let guard = 0;
   const MAX_TOOL_ROUNDS = 6; // was 4 — too tight for e.g. "look this up, then create several calendar events," which needs more than one round-trip per event
 
-  while (response.stop_reason === "tool_use" && guard < MAX_TOOL_ROUNDS) {
+  while (response.stop_reason === "tool_use" && guard < MAX_TOOL_ROUNDS && !shouldStop?.()) {
     guard++;
     const toolUseBlocks = response.content.filter((b: any) => b.type === "tool_use") as any[];
 
@@ -336,7 +345,7 @@ export async function runConversationTurn({ messages, tools, userId, timezone, a
     // giving up, the caller can keep calling this function again with the
     // same `messages` (now left in a valid, resumable state above) as a
     // background job, independent of the live voice turn that kicked it off.
-    return { finalText: "This is a bigger job — I'll keep working on it and let you know when it's done.", messages, needsMoreWork: true };
+    return { finalText: "This is a bigger job — I'll keep working on it in the background, so ask me anything in the meantime.", messages, needsMoreWork: true };
   }
 
   // Find the answer text, not the "thinking out loud" text. When a server
