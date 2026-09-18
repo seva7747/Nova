@@ -14,7 +14,11 @@ router.get("/status", requireAuth, async (req, res) => {
     // has a resolved human label per account (see composio.ts), so it does
     // double duty as both "what's connected" and "what to call each one" —
     // no need to also ship the raw connection list just to check a status field.
-    const accountsByToolkit = configured ? await getAccountsByToolkit(userId) : {};
+    // Always fresh, never the 60s cache — see getAccountsByToolkit's comment.
+    // This endpoint exists specifically so the Connectors page can show
+    // up-to-the-second truth (right after connecting something), which
+    // matters far more here than the extra Composio call it costs.
+    const accountsByToolkit = configured ? await getAccountsByToolkit(userId, true) : {};
     res.json({ configured, accountsByToolkit });
   } catch (err: any) {
     res.json({ configured, accountsByToolkit: {}, error: err?.message });

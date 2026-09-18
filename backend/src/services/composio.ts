@@ -285,10 +285,23 @@ type AccountsCacheEntry = { data: Record<string, ConnectedAccountSummary[]>; exp
 const accountsCache = new Map<string, AccountsCacheEntry>();
 const ACCOUNTS_TTL_MS = 60 * 1000; // short — a user actively connecting a second account mid-session should see it show up quickly
 
-/** ACTIVE connected accounts for a user, grouped by toolkit slug, each with a resolved human-friendly label. */
-export async function getAccountsByToolkit(userId: string): Promise<Record<string, ConnectedAccountSummary[]>> {
+/**
+ * ACTIVE connected accounts for a user, grouped by toolkit slug, each with a
+ * resolved human-friendly label. `skipCache` bypasses the read (but still
+ * refreshes the cache afterward) — CONFIRMED BY TESTING this matters: the
+ * Connectors page polls this every 5s right after opening an OAuth tab so it
+ * notices a new connection without a manual refresh, but the FIRST poll
+ * fires before the user has even finished authorizing, caching an empty
+ * result for a full 60s — every later poll in that same polling window then
+ * returned that same stale "not connected" regardless of the real state,
+ * making a successful connection look like it silently failed. The 60s cache
+ * still matters a lot for the OTHER caller (getComposioTools, hit on every
+ * single conversation turn) — this only bypasses it for the one place a
+ * fresh answer is worth the extra Composio call.
+ */
+export async function getAccountsByToolkit(userId: string, skipCache = false): Promise<Record<string, ConnectedAccountSummary[]>> {
   const cached = accountsCache.get(userId);
-  if (cached && cached.expiresAt > Date.now()) return cached.data;
+  if (!skipCache && cached && cached.expiresAt > Date.now()) return cached.data;
 
   const all = await listConnections(userId);
   const active = all.filter((c: any) => String(c.status ?? "").toUpperCase() === "ACTIVE");
