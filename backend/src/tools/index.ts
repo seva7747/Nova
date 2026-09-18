@@ -3,27 +3,28 @@ import { gmailSearchTool, runGmailSearch } from "./gmailSearch.js";
 import { addCalendarEventTool, runAddCalendarEvent } from "./calendarEvent.js";
 import { executeComposioTool } from "../services/composio.js";
 
-// NOTE: there is currently NO web/live-info search tool. Anthropic (built-in
-// web_search) and Groq (built-in browser_search, on gpt-oss models) both
-// offered a server-side search tool that could sit in the `tools` array next
-// to real function tools — CONFIRMED (via Google's own docs) Gemini's
-// OpenAI-compatible endpoint has no equivalent: Google Search grounding is
-// only exposed through Gemini's native API, not through this compatibility
-// layer, and not alongside custom function-calling at all. So weather,
-// sports scores, news, prices, "who won last night" — anything STATIC_
-// INSTRUCTIONS in llm.ts calls out as needing a search — currently has no
-// tool to actually do it; Nova will either answer from stale training data
-// or (per those same instructions) decline rather than guess. Restoring this
-// needs a real search API (e.g. Tavily, Brave Search, Bing) wired in as its
-// own custom tool, the same pattern as call_restaurant/search_gmail below —
-// not done yet, since that needs its own API key this project doesn't have.
+/**
+ * Anthropic's built-in web search tool. Unlike the tools below, this one runs
+ * entirely on Anthropic's servers — Claude decides to search, the API
+ * fetches real results, and Claude answers with them, all inside a single
+ * API call. We never see a "tool_use" block for it and never execute
+ * anything ourselves; it just needs to be listed here. This is what answers
+ * weather, sports scores/schedules, news, prices — anything that changes
+ * over time and can't come from the model's training data alone.
+ * Docs: https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
+ */
+const webSearchTool = {
+  type: "web_search_20250305",
+  name: "web_search",
+  max_uses: 3, // caps cost/latency per turn — most questions need 1 search
+};
 
 // search_gmail replaces direct access to Composio's GMAIL_FETCH_EMAILS
 // entirely (see gmailSearch.ts's comment for why) — it isn't a Composio
 // toolkit tool, so it's listed here as a static tool the same way
 // call_restaurant is, and composio.ts's CURATED_TOOLS.GMAIL no longer
 // includes GMAIL_FETCH_EMAILS.
-export const staticTools = [restaurantTool, gmailSearchTool, addCalendarEventTool];
+export const staticTools = [webSearchTool, restaurantTool, gmailSearchTool, addCalendarEventTool];
 
 /** Tool names/prefixes that represent a "real world" action worth talking over. */
 const SLOW_STATIC_TOOLS = new Set(["call_restaurant", "search_gmail", "add_calendar_event"]);

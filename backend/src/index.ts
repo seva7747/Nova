@@ -19,7 +19,7 @@ app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
     configured: {
-      brain: Boolean(env.GEMINI_API_KEY),
+      brain: Boolean(env.ANTHROPIC_API_KEY),
       composio: Boolean(env.COMPOSIO_API_KEY),
       liveVoice: Boolean(env.OPENAI_API_KEY),
       sms: Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER && env.PUBLIC_BASE_URL),

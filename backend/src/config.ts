@@ -10,7 +10,7 @@ function warnIfMissing(name: string, value: string, feature: string) {
   }
 }
 
-const GEMINI_API_KEY = optional("GEMINI_API_KEY");
+const ANTHROPIC_API_KEY = optional("ANTHROPIC_API_KEY");
 const COMPOSIO_API_KEY = optional("COMPOSIO_API_KEY");
 const OPENAI_API_KEY = optional("OPENAI_API_KEY");
 const TWILIO_ACCOUNT_SID = optional("TWILIO_ACCOUNT_SID");
@@ -18,7 +18,7 @@ const TWILIO_AUTH_TOKEN = optional("TWILIO_AUTH_TOKEN");
 const TWILIO_PHONE_NUMBER = optional("TWILIO_PHONE_NUMBER");
 const PUBLIC_BASE_URL = optional("PUBLIC_BASE_URL");
 
-warnIfMissing("GEMINI_API_KEY", GEMINI_API_KEY, "Nova's reasoning/brain, and web search");
+warnIfMissing("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY, "Nova's reasoning/brain, and web search (weather, sports, news, ...)");
 warnIfMissing("COMPOSIO_API_KEY", COMPOSIO_API_KEY, "Gmail / Google Calendar / other integrations");
 warnIfMissing("OPENAI_API_KEY", OPENAI_API_KEY, "Nova's voice (GPT-Live-1) — nothing will listen or speak without this");
 warnIfMissing("TWILIO_ACCOUNT_SID", TWILIO_ACCOUNT_SID, "texting Nova (SMS) — every user's own agent-you-can-text number");
@@ -30,21 +30,14 @@ export const env = {
   PORT: Number(optional("PORT", "8787")),
   CORS_ORIGIN: optional("CORS_ORIGIN", "http://localhost:5173"),
 
-  GEMINI_API_KEY,
-  // Nova's reasoning/brain. History: started on Anthropic (Claude Haiku
-  // 4.5) → tried Groq to run for free, but CONFIRMED BY TESTING its free
-  // tier hard-caps openai/gpt-oss-120b at 8,000 tokens/minute — Nova's own
-  // tool schemas alone (35+ real tools across Gmail/Calendar/Canvas/
-  // Composio) already request ~21k tokens before any conversation even
-  // starts, so EVERY request failed outright, not just under heavy use.
-  // Landed on Gemini via Google's OpenAI-compatible endpoint (see llm.ts)
-  // instead: genuinely cheap, no tight per-minute wall like Groq's.
-  // gemini-2.5-flash-lite (the cheapest model at $0.10/$0.40 per million
-  // tokens) is CONFIRMED BY TESTING to 404 for new API keys — Google's own
-  // error names gemini-3.5-flash-lite as the replacement, at $0.30/$2.50 per
-  // million tokens — still cheap in absolute terms, just not the very
-  // cheapest one on paper.
-  GEMINI_MODEL: optional("GEMINI_MODEL", "gemini-3.5-flash-lite"),
+  ANTHROPIC_API_KEY,
+  ANTHROPIC_MODEL: optional("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+  // History: briefly swapped to Groq (free tier hard-caps at 8,000
+  // tokens/minute — Nova's own tool schemas alone need ~21k, so every
+  // request failed outright) then Gemini (works, but its OpenAI-compatible
+  // endpoint has no built-in search tool at all, so weather/sports/news
+  // stopped working). Reverted back to Anthropic once credits were topped
+  // up — see llm.ts/composio.ts/tools/index.ts for the corresponding reverts.
 
   // Note: there's no COMPOSIO_TOOLKITS allowlist anymore — which services
   // Claude can use is now driven entirely by which ones the user has

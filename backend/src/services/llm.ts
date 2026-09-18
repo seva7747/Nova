@@ -1,13 +1,8 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { env } from "../config.js";
 import { executeTool, isSlowTool } from "../tools/index.js";
 
-// Nova's brain runs on Gemini's OpenAI-compatible chat completions endpoint
-// — see config.ts for the full history of why (Anthropic → Groq → here).
-// Kept as a plain constant, not an env var, since it's fixed for this
-// provider; the whole surface below only cares about base URL + key + model,
-// so swapping to yet another OpenAI-compatible provider is a config change
-// here, not a rewrite.
-const API_BASE = "https://generativelanguage.googleapis.com/v1beta/openai";
+const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
 // See the big comment where these are used, in the tool-result loop below.
 const MAX_FIELD_CHARS = 1200;
@@ -18,8 +13,9 @@ const MAX_FIELD_CHARS = 1200;
 // a legitimately-requested large result set (e.g. "look at all my emails
 // with this client") after only per-field truncation, not because anything
 // was actually oversized. Raised well past anything per-field truncation
-// should realistically produce.
-//
+// should realistically produce — still under 3% of Claude's 200k-token
+// window, so it's a real backstop, not a soft cap doing the work it isn't
+// meant to.
 const MAX_TOOL_RESULT_TOTAL_CHARS = 80000;
 
 /**
@@ -46,6 +42,14 @@ function truncateLongStrings(value: any, depth = 0): any {
   return value;
 }
 
+// This instruction block never changes between requests, so it's marked
+// cacheable (cache_control: ephemeral) — Anthropic skips re-processing it on
+// every call within the ~5 minute cache window, which is a real chunk of the
+// per-turn latency once tool schemas are added on top of it. The current
+// date/time goes in a SEPARATE, uncached block appended after it (see
+// buildSystem below) specifically so this cacheable block's text stays
+// byte-for-byte identical call to call — caching is a prefix match, so
+// anything that changes has to live after the cached part, not inside it.
 const STATIC_INSTRUCTIONS = `You are Nova, a warm, quick, slightly witty voice assistant that lives inside a smart speaker — think Alexa, but named Nova.
 
 Rules for how you talk:
@@ -55,7 +59,7 @@ Rules for how you talk:
 - If a request is genuinely ambiguous in a way that changes the outcome (e.g. no time given for a calendar event), ask one short clarifying question instead of guessing — but don't ask for details you can reasonably assume (e.g. default appointment length to 30 minutes if not given).
 - When a tool result contains an "error" field, explain the problem to the user simply and naturally — don't read the raw error out loud.
 - Don't narrate your plan out loud ("Let me search for that...", "I'll check your calendar...") before calling a tool — only your final answer gets spoken, and thinking out loud first just makes you sound slower than you are. Call the tool, then speak once you have the answer.
-- You do NOT currently have a way to search the web or look up live information — no tool for weather, sports scores/schedules, news, prices, or anything else that changes over time or postdates your training. If asked something like that, say plainly that you can't look that up right now rather than guessing or answering from possibly-stale training data.
+- You have a web_search tool for anything current, changing, or outside your training data — weather, sports scores/schedules, news, prices, "who won last night," etc. Always search rather than guess for these; a wrong guess about live information is worse than a one-second search. For established facts, math, or normal conversation, just answer directly without searching.
 - You also have a tool to call a restaurant and book a table, tools for Gmail search/send/reply, and tools for whichever other services the user has connected through the Connectors page — that list varies per user and can be any of roughly 1,500 possible services (Calendar, Drive, Slack, Notion, Todoist, WhatsApp, Spotify, and many more), not a fixed set, so go by whatever tools are actually available to you in a given conversation rather than assuming a specific list. Only call a tool when the request actually needs it. WhatsApp (when connected) can only send messages, not read them — if asked to check WhatsApp messages, say that isn't something you can do rather than guessing.
 - For anything about Gmail — searching, counting, "did I get an email from X," "how many yesterday" — always use search_gmail, never try to guess at Gmail's raw search syntax or do date-range math yourself. Say what you mean in its terms (sinceDaysAgo/untilDaysAgo as plain small numbers — 0 = today, 1 = yesterday, 7 = a week ago; onlyReceived defaults to true) and it handles timezones and query-building correctly. For a count, use returnedCount when countIsExact is true — that's a real, complete count. totalMatching is Gmail's own rough ESTIMATE and can be badly wrong (confirmed: 201 vs a true 49) — only fall back to it, and call it approximate out loud, when countIsExact is false and fetching everything genuinely isn't practical. Leave includeContent false unless you actually need to read what's inside specific emails — it's faster and more reliable that way. If a name search comes back empty, Gmail matches text not phonetics — ask the user to confirm the spelling before concluding there's nothing. Never state a specific date, sender, or detail that isn't literally in the returned data — if you're summarizing many messages, describe what's actually there, don't invent or extrapolate examples.
 - For Canvas (school courses/assignments/grades), figure out course/assignment ids by calling the list tools first (e.g. CANVAS_LIST_COURSES) rather than guessing them — nearly every per-course Canvas tool needs a real numeric id, not a course name. A grade, score, or due date is exactly the kind of thing that's actively harmful to get wrong — never state one that isn't literally in a tool's returned data, and never round, estimate, or infer one from partial information.
@@ -66,12 +70,7 @@ Rules for how you talk:
 
 type AccountsByToolkit = Record<string, { id: string; label: string }[]>;
 
-/**
- * Builds the system message as one string — this API's chat completions
- * shape has no separate top-level `system` field the way Anthropic's does,
- * just a normal {role:"system"} message first in the array.
- */
-function buildSystemPrompt(timezone?: string, accountsByToolkit?: AccountsByToolkit): string {
+function buildSystem(timezone?: string, accountsByToolkit?: AccountsByToolkit) {
   const now = new Date();
   const tz = timezone || env.TIMEZONE;
   const when = now.toLocaleString("en-US", {
@@ -85,7 +84,18 @@ function buildSystemPrompt(timezone?: string, accountsByToolkit?: AccountsByTool
     timeZoneName: "short",
   });
 
-  let system = `${STATIC_INSTRUCTIONS}\n\nRight now it is ${when}. Resolve any relative day/time the user gives you ("this Thursday", "tomorrow at 4", "in an hour") against that moment and timezone.`;
+  // Gmail day-boundary math (the thing that was actually error-prone) no
+  // longer happens here or in Claude's head — search_gmail (tools/gmailSearch.ts)
+  // takes plain "days ago" numbers and does that arithmetic itself, correctly,
+  // in code. This block just needs to state the current moment for everything
+  // else (calendar events, "in an hour," etc.).
+  const blocks = [
+    { type: "text" as const, text: STATIC_INSTRUCTIONS, cache_control: { type: "ephemeral" as const } },
+    {
+      type: "text" as const,
+      text: `Right now it is ${when}. Resolve any relative day/time the user gives you ("this Thursday", "tomorrow at 4", "in an hour") against that moment and timezone.`,
+    },
+  ];
 
   // Multiple accounts connected for the same service (e.g. two Gmail
   // addresses) — see composio.ts's patchMultiAccountTools, which is what
@@ -95,41 +105,26 @@ function buildSystemPrompt(timezone?: string, accountsByToolkit?: AccountsByTool
     const desc = multi
       .map(([slug, accounts]) => `${slug} — ${accounts.map((a) => `"${a.label}" (id: ${a.id})`).join(", ")}`)
       .join("; ");
-    system += `\n\nThe user has more than one account connected for some services: ${desc}. If a request could apply to any of them and it isn't already clear which one, ask the user which account before calling a tool for that service — don't just guess or default to one. Once you know (they said, or only one makes sense for the request), pass that account's id as the tool's "connectedAccountId" input.`;
+    blocks.push({
+      type: "text" as const,
+      text: `The user has more than one account connected for some services: ${desc}. If a request could apply to any of them and it isn't already clear which one, ask the user which account before calling a tool for that service — don't just guess or default to one. Once you know (they said, or only one makes sense for the request), pass that account's id as the tool's "connectedAccountId" input.`,
+    });
   }
 
-  return system;
+  return blocks;
 }
 
-/**
- * Every tool this codebase defines itself (search_gmail, add_calendar_event,
- * call_restaurant) still exports the same {name, description, input_schema}
- * shape it always has — that's plain JSON Schema either way, so there was no
- * need to touch those files for the provider swap. Composio's tools already
- * arrive correctly shaped (see services/composio.ts's OpenAIProvider) as
- * {type:"function", function:{...}} and pass through unchanged; any built-in
- * server-side search tool (see tools/index.ts) does too, whatever shape this
- * provider expects for it. This just wraps the ones that need it.
- */
-function toApiTool(t: any): any {
-  if (!t.input_schema) return t; // already correctly shaped (Composio's function tools) or a non-function built-in tool entry
-  return { type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } };
-}
-
-function safeParseArgs(raw: string | undefined): any {
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
+/** Marks the last tool in the array cacheable — caches the whole tool-schema block (Anthropic caching is prefix-based). */
+function withToolCaching(tools: any[]): any[] {
+  if (tools.length === 0) return tools;
+  return tools.map((t, i) => (i === tools.length - 1 ? { ...t, cache_control: { type: "ephemeral" } } : t));
 }
 
 // CONFIRMED BY TESTING: a live session's `messages` array (see
 // liveDelegate.ts — same for smsDelegate.ts) is only ever appended to across
 // every turn for as long as the session stays open; nothing capped its
 // total size. A long enough conversation — especially one with several
-// tool-heavy turns — eventually pushes the whole history past the model's
+// tool-heavy turns — eventually pushes the whole history past Claude's
 // context window, and the API call throws. The catch block that runs this
 // function rolls back only the CURRENT turn's own addition, so the already-
 // oversized history from every earlier turn is untouched — meaning once a
@@ -138,24 +133,26 @@ function safeParseArgs(raw: string | undefined): any {
 // ("sorry, something went wrong," forever, no matter what was asked). Fixed
 // by trimming down to the most recent whole turns before ever reaching the
 // limit, rather than only reacting after the API has already rejected it.
-const MAX_HISTORY_CHARS = 400_000;
+const MAX_HISTORY_CHARS = 400_000; // ~100k tokens at ~4 chars/token — well under the 200k window, leaving room for the system prompt, tool schemas, and response
 
 /**
  * Drops the oldest whole turns from `messages` once its total size crosses
- * MAX_HISTORY_CHARS, always keeping at least the most recent turn. In this
- * API's shape a tool result is its own {role:"tool"} message (never role
- * "user"), so — unlike the Anthropic version of this function — EVERY
- * {role:"user"} message is a genuine turn boundary; no need to distinguish
- * real user text from a tool result glued onto the same role. Cutting only
- * at these boundaries means every tool_calls/tool-result set that survives
- * the trim is always complete — never orphaned the way the session-
- * corruption bug elsewhere in this file was.
+ * MAX_HISTORY_CHARS, always keeping at least the most recent turn. A "turn"
+ * starts at a message that's the user's own plain-text question (role
+ * "user" with STRING content) — as opposed to a tool_result message (role
+ * "user" but ARRAY content), which must stay glued to the assistant
+ * tool_use message right before it. Cutting only at these boundaries means
+ * every tool_use/tool_result pair that survives the trim is always complete
+ * — never orphaned the way the session-corruption bug elsewhere in this file
+ * was.
  */
 function trimMessageHistory(messages: any[]): any[] {
   const originalSize = JSON.stringify(messages).length;
   if (originalSize <= MAX_HISTORY_CHARS) return messages;
 
-  const turnStarts = messages.map((m, i) => (m.role === "user" ? i : -1)).filter((i) => i >= 0);
+  const turnStarts = messages
+    .map((m, i) => (m.role === "user" && typeof m.content === "string" ? i : -1))
+    .filter((i) => i >= 0);
 
   for (let i = 0; i < turnStarts.length - 1; i++) {
     const candidate = messages.slice(turnStarts[i + 1]);
@@ -166,6 +163,10 @@ function trimMessageHistory(messages: any[]): any[] {
       return candidate;
     }
   }
+  // Even just the most recent turn alone doesn't fit — nothing smaller left
+  // to try (the per-tool-result cap below makes this rare). Return it anyway
+  // rather than give up; a huge single turn is still more likely to succeed
+  // than the full, larger history.
   console.warn(`[llm] conversation history still large (${originalSize} chars) after trimming to the most recent turn`);
   return turnStarts.length > 0 ? messages.slice(turnStarts[turnStarts.length - 1]) : messages;
 }
@@ -181,99 +182,107 @@ type ConversationTurnArgs = {
 
 /**
  * Turns a failed turn into what Nova should actually say. Most failures are
- * genuinely opaque and get the generic apology — but a couple of specific,
- * common causes are worth naming instead of leaving the user debugging a
- * phantom code issue: a rate limit (429) or a low account balance, from
- * whichever provider is currently wired up here (see the history in
- * config.ts) — both patterns kept generic/regex-based rather than tied to
- * one provider's exact wording, on purpose, since this has already changed
- * providers twice.
+ * genuinely opaque and get the generic apology — but a low Anthropic account
+ * balance is common enough, and looks IDENTICAL to a real bug from the
+ * user's side (same generic "something went wrong," repeating on every
+ * question), that it's worth telling them the real, actionable cause instead
+ * of leaving them debugging a phantom code issue. CONFIRMED BY TESTING: this
+ * exact error, verbatim, is what Anthropic returns once the account backing
+ * ANTHROPIC_API_KEY runs out of credits — a 400 with this message, not a 429
+ * or anything rate-limit-shaped.
  */
 export function describeConversationError(err: any, fallback = "Sorry, something went wrong on my end just now."): string {
   const message = String(err?.message ?? "");
+  if (/credit balance is too low/i.test(message)) {
+    return "My brain's out of credits — the Anthropic account behind me needs more added at console.anthropic.com, under Plans and Billing, before I can keep going.";
+  }
   if (err?.status === 429 || /rate.?limit/i.test(message)) {
     return "I'm getting rate-limited right now — give it a few seconds and try again.";
-  }
-  if (/credit balance is too low|insufficient.?quota/i.test(message)) {
-    return "My brain's out of credits — the account behind me needs more added before I can keep going.";
   }
   return fallback;
 }
 
 export async function runConversationTurn({ messages, tools, userId, timezone, accountsByToolkit, onSlowTool }: ConversationTurnArgs) {
-  if (!env.GEMINI_API_KEY) {
+  if (!env.ANTHROPIC_API_KEY) {
     return {
-      finalText: "Nova's brain isn't hooked up yet — add GEMINI_API_KEY to backend/.env.",
+      finalText: "Nova's brain isn't hooked up yet — add ANTHROPIC_API_KEY to backend/.env.",
       messages,
     };
   }
 
   messages = trimMessageHistory(messages);
 
-  const systemPrompt = buildSystemPrompt(timezone, accountsByToolkit);
-  const apiTools = tools.map(toApiTool);
-  const model = env.GEMINI_MODEL;
-  // Same reasoning as the old maxTokens: sized for spoken replies, but also
-  // needs enough room for structured tool-call JSON when several tool calls
-  // come back in one response (e.g. several calendar events at once).
-  const maxCompletionTokens = 1024;
+  const system = buildSystem(timezone, accountsByToolkit);
+  const cachedTools = withToolCaching(tools);
+  const model = env.ANTHROPIC_MODEL;
+  // CONFIRMED BY TESTING: 300 was sized for spoken replies (short) but also
+  // caps how much STRUCTURED TOOL-CALL JSON Claude can emit in one response
+  // — a completely different thing. Asking for several calendar events at
+  // once ("mark every California court holiday this month") needed multiple
+  // tool_use blocks in one message, and 300 tokens wasn't enough room for
+  // that JSON — Anthropic cut the response off with stop_reason: "max_tokens"
+  // mid-tool-call, leaving an unresolved tool_use with no result, which is
+  // the SAME session-corrupting failure as the tool-round-limit case below,
+  // just triggered a different way (stop_reason wasn't even "tool_use" here,
+  // so the guard-cap handling for that case didn't catch this one). Raised
+  // well past what multi-tool-call JSON should ever need; the actual SPOKEN
+  // answer stays short regardless, since that's a separate, later message.
+  const maxTokens = 1024;
 
-  async function callModel(): Promise<any> {
-    const resp = await fetch(`${API_BASE}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${env.GEMINI_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "system", content: systemPrompt }, ...messages],
-        tools: apiTools,
-        tool_choice: "auto",
-        max_completion_tokens: maxCompletionTokens,
-      }),
-    });
-    const json: any = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      const err: any = new Error(json?.error?.message ?? `Gemini API error (${resp.status})`);
-      err.status = resp.status;
-      throw err;
-    }
-    return json.choices[0];
-  }
-
-  let choice = await callModel();
+  let response = await anthropic.messages.create({
+    model,
+    max_tokens: maxTokens,
+    system,
+    tools: cachedTools,
+    messages,
+  });
 
   let fillerFired = false;
   let guard = 0;
   const MAX_TOOL_ROUNDS = 6; // was 4 — too tight for e.g. "look this up, then create several calendar events," which needs more than one round-trip per event
 
-  while (choice.finish_reason === "tool_calls" && guard < MAX_TOOL_ROUNDS) {
+  while (response.stop_reason === "tool_use" && guard < MAX_TOOL_ROUNDS) {
     guard++;
-    const toolCalls: any[] = choice.message.tool_calls ?? [];
+    const toolUseBlocks = response.content.filter((b: any) => b.type === "tool_use") as any[];
 
     if (!fillerFired) {
-      const slowCall = toolCalls.find((tc) => isSlowTool(tc.function.name));
-      if (slowCall) {
+      const slowBlock = toolUseBlocks.find((b) => isSlowTool(b.name));
+      if (slowBlock) {
         fillerFired = true;
-        await onSlowTool({ name: slowCall.function.name, input: safeParseArgs(slowCall.function.arguments) });
+        await onSlowTool(slowBlock);
       }
     }
 
-    // Reconstructed as a clean {role, content, tool_calls} message rather
-    // than replaying the API's raw response object — gpt-oss models attach
-    // extra vendor fields (`reasoning`, `executed_tools`) that don't need to
-    // round-trip back into history.
-    messages.push({ role: "assistant", content: choice.message.content ?? null, tool_calls: toolCalls });
-
-    // Same truncation strategy as before the Groq swap, still load-bearing —
-    // see MAX_TOOL_RESULT_TOTAL_CHARS's comment above for why this matters
-    // even more now (Groq's TPM budget is far tighter than Claude's context
-    // window ever was).
-    const toolResultMessages = await Promise.all(
-      toolCalls.map(async (tc) => {
+    // CONFIRMED BY TESTING: GMAIL_FETCH_EMAILS (called with no args, i.e.
+    // whenever the user just says "check my email") came back with full
+    // message bodies for enough emails to hit 273,808 tokens in one tool
+    // result — 37% over Claude's 200k window, on its own, for a single
+    // "check my email." Anthropic then rejects the request outright, and
+    // since messages.push below has already happened by the time that
+    // failure surfaces, every subsequent turn in the same conversation
+    // resends that same bloated history and fails identically — one oversized
+    // tool result was silently wedging the ENTIRE rest of the session, not
+    // just the turn that triggered it (see the recovery in liveDelegate.ts
+    // for the other half of this fix).
+    //
+    // FIRST ATTEMPT at a fix truncated the whole serialized JSON blob at a
+    // flat character count — which cut off whichever fields happened to fall
+    // after the cutoff, including dates, for however many emails didn't fit.
+    // That's why Nova could read email content but not reliably say when
+    // anything arrived. Fixed properly below: truncate long STRING VALUES
+    // in place (email bodies, mainly) while walking the object, so every
+    // item in an array keeps every field — dates, senders, subjects — no
+    // matter how many items there are; only the genuinely long free-text
+    // fields get shortened.
+    const toolResults = await Promise.all(
+      toolUseBlocks.map(async (block) => {
         let content: string;
         try {
-          const input = safeParseArgs(tc.function.arguments);
-          const result = await executeTool(tc.function.name, input, { userId, timezone });
+          const result = await executeTool(block.name, block.input, { userId, timezone });
           content = JSON.stringify(truncateLongStrings(result));
+          // Safety net only — normal results shouldn't get anywhere near this
+          // after per-field truncation above; this just guarantees a hard
+          // ceiling regardless of how many array items or nesting there is.
           if (content.length > MAX_TOOL_RESULT_TOTAL_CHARS) {
             const omitted = content.length - MAX_TOOL_RESULT_TOTAL_CHARS;
             content = `${content.slice(0, MAX_TOOL_RESULT_TOTAL_CHARS)}... [truncated — ${omitted} more characters omitted; ask a narrower question (e.g. "just unread", "just the last 5") if something's missing]`;
@@ -281,48 +290,77 @@ export async function runConversationTurn({ messages, tools, userId, timezone, a
         } catch (err: any) {
           content = JSON.stringify({ error: err?.message ?? "That tool failed." });
         }
-        return { role: "tool" as const, tool_call_id: tc.id, content };
+        return { type: "tool_result" as const, tool_use_id: block.id, content };
       })
     );
-    messages.push(...toolResultMessages);
 
-    choice = await callModel();
+    messages.push({ role: "assistant", content: response.content });
+    messages.push({ role: "user", content: toolResults });
+
+    response = await anthropic.messages.create({ model, max_tokens: maxTokens, system, tools: cachedTools, messages });
   }
 
-  // Unconditionally push the final assistant turn — mirrors the pre-Groq
-  // version's same unconditional push right after the loop, and covers both
-  // a clean finish AND a still-has-tool_calls state (the guard cap above was
-  // hit, or finish_reason came back "length" with partial tool_calls that
-  // never entered the loop at all — same failure shape Claude's max_tokens
-  // mid-tool-call case was, just under a different name here).
-  messages.push({
-    role: "assistant",
-    content: choice.message.content ?? null,
-    ...(choice.message.tool_calls ? { tool_calls: choice.message.tool_calls } : {}),
-  });
+  messages.push({ role: "assistant", content: response.content });
 
-  // CONFIRMED BY TESTING (pre-Groq, against Claude, twice, via two different
-  // triggers) — an assistant message left with tool_calls and no matching
-  // tool response corrupts every future call in the same conversation history
-  // forever. Same fix here regardless of provider: check for orphaned tool
-  // calls directly, by content, and satisfy the contract with a synthetic
-  // "cancelled" result for each before doing anything else.
-  const orphaned: any[] = choice.message.tool_calls ?? [];
+  // CONFIRMED BY TESTING, TWICE, via two different triggers — this one
+  // silently broke an entire session, not just one turn. First seen when a
+  // request needed more tool-call rounds than `guard` allows (stop_reason
+  // stayed "tool_use" when the loop above gave up). Second time, a DIFFERENT
+  // trigger produced the identical failure: Claude tried to emit several
+  // tool_use blocks in one response (multiple calendar events at once) and
+  // ran out of max_tokens mid-way, so stop_reason was "max_tokens" — a value
+  // the first fix's `=== "tool_use"` check didn't account for, so it slipped
+  // through anyway. Either way, the assistant message just pushed above can
+  // contain tool_use blocks with no tool_result after them, and Anthropic's
+  // API requires one immediately following, in the very next message, or
+  // EVERY future call in this same conversation fails with "tool_use ids
+  // were found without tool_result blocks," forever, since `messages` is the
+  // session's whole reused history. That's exactly why an unrelated question
+  // ("Chelsea's next game") started failing right after a big calendar
+  // request both times. Fixed properly now: check for orphaned tool_use
+  // blocks directly, by content, instead of trying to enumerate every
+  // stop_reason that could produce one — satisfy the API's contract with a
+  // synthetic "cancelled" result for each before doing anything else, so the
+  // history is always valid going forward no matter how this happens next.
+  const orphaned = (response.content as any[]).filter((b) => b.type === "tool_use");
   if (orphaned.length > 0) {
-    const cancelResults = orphaned.map((tc) => ({
-      role: "tool" as const,
-      tool_call_id: tc.id,
+    const cancelResults = orphaned.map((block) => ({
+      type: "tool_result" as const,
+      tool_use_id: block.id,
       content: JSON.stringify({ error: "Paused here — will resume with the next batch of tool calls shortly." }),
     }));
-    messages.push(...cancelResults);
-    // `needsMoreWork: true` tells the caller (liveDelegate.ts/smsDelegate.ts)
-    // this genuinely isn't finished — a big enough job needs more rounds than
-    // one call here allows. The caller can keep calling this function again
-    // with the same `messages` (left in a valid, resumable state above) as a
-    // background job, independent of whatever kicked it off.
+    messages.push({ role: "user", content: cancelResults });
+    // `needsMoreWork: true` tells the caller (liveDelegate.ts) this genuinely
+    // isn't finished — a big enough job (e.g. "mark every court holiday this
+    // year") needs more rounds than one call here allows. Rather than just
+    // giving up, the caller can keep calling this function again with the
+    // same `messages` (now left in a valid, resumable state above) as a
+    // background job, independent of the live voice turn that kicked it off.
     return { finalText: "This is a bigger job — I'll keep working on it and let you know when it's done.", messages, needsMoreWork: true };
   }
 
-  const finalText = (choice.message.content ?? "").trim() || "Sorry, I didn't catch that.";
+  // Find the answer text, not the "thinking out loud" text. When a server
+  // tool like web_search runs, Claude's response can contain an earlier text
+  // block ("Let me look that up...") before the search, and — this is the
+  // part that bit us — when the answer cites sources, the real answer itself
+  // often comes back as SEVERAL text blocks with citation blocks spliced
+  // between them (Anthropic's citation format), not one single block. Taking
+  // only the very last block was cutting the answer off mid-sentence.
+  // Fix: find the last non-text block (the last search/tool result), then
+  // join every text block that comes after it — that's the complete answer,
+  // with the pre-search narration correctly excluded.
+  const content = response.content as any[];
+  let lastNonTextIdx = -1;
+  content.forEach((b, i) => {
+    if (b.type !== "text") lastNonTextIdx = i;
+  });
+  const finalText =
+    content
+      .slice(lastNonTextIdx + 1)
+      .filter((b) => b.type === "text")
+      .map((b) => b.text)
+      .join("")
+      .trim() || "Sorry, I didn't catch that.";
+
   return { finalText, messages };
 }

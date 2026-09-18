@@ -29,19 +29,10 @@ async function getClient(): Promise<any | null> {
   if (!clientPromise) {
     clientPromise = (async () => {
       const { Composio } = await import("@composio/core");
-      // OpenAIProvider, not AnthropicProvider — Nova's brain runs on Groq's
-      // OpenAI-compatible chat completions API now (see config.ts), and
-      // Composio shapes tool schemas differently per provider. Pinned to
-      // 0.1.55 exactly, matching the installed @composio/core version — a
-      // newer @composio/openai declares a peer range (>=0.10.0) this
-      // project's pinned core doesn't satisfy. CONFIRMED BY TESTING:
-      // tools.get() with this provider returns the standard
-      // {type:"function", function:{name,description,parameters}} shape
-      // llm.ts expects.
-      const { OpenAIProvider } = await import("@composio/openai");
+      const { AnthropicProvider } = await import("@composio/anthropic");
       return new Composio({
         apiKey: env.COMPOSIO_API_KEY,
-        provider: new OpenAIProvider(),
+        provider: new AnthropicProvider(),
       });
     })();
   }
