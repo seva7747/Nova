@@ -57,7 +57,7 @@ export async function fetchConnectorCatalog(query: string, cursor?: string): Pro
 
 export type NovaHealth = {
   ok: boolean;
-  configured: { brain: boolean; composio: boolean; liveVoice: boolean; sms: boolean };
+  configured: { brain: boolean; composio: boolean; liveVoice: boolean; twilio: boolean };
 };
 
 export async function fetchHealth(): Promise<NovaHealth | null> {
