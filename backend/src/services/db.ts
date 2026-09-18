@@ -26,10 +26,17 @@ export const db = new DatabaseSync(path.join(DATA_DIR, "nova.db"));
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,              -- a slug derived from "First Last" (see services/auth.ts's slugifyName) — this IS the Composio/GPT-Live "userId" used everywhere else
-    display_name TEXT,                -- "First Last" as typed
-    phone_number TEXT UNIQUE,         -- only set for accounts created by texting Nova's number (see smsDelegate.ts) — nullable, since name-based sign-in never sets it
+    id TEXT PRIMARY KEY,              -- the user's own phone number (E.164-ish) — this IS the Composio/GPT-Live "userId" used everywhere else, so web login, texting Nova, and calling Nova all land on the SAME account for the same person
+    display_name TEXT,                -- "First Last" as typed at sign-up, purely cosmetic (NavBar greeting) — identity is the phone number, not this
+    phone_number TEXT UNIQUE,
     created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS otp_codes (
+    phone_number TEXT PRIMARY KEY,
+    code TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS sessions (

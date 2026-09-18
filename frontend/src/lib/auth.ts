@@ -55,21 +55,35 @@ export function useAuth() {
 }
 
 /**
- * Signs in with just a first + last name — no password, no verification
- * step. Creates the account on first use; the same name always returns to
- * the same account (see backend/src/services/auth.ts's signIn for the real
- * tradeoff this makes — good enough to tell people apart and keep connected
- * integrations separate, not real security).
+ * Step 1 of login: text a 6-digit code to this phone number. Phone number IS
+ * the account — the same one texting or calling Nova's number reaches (see
+ * backend/src/services/auth.ts) — so whatever's connected here is available
+ * on every channel, not just the web app.
  */
-export async function signIn(firstName: string, lastName: string): Promise<{ error?: string }> {
+export async function requestCode(phoneNumber: string): Promise<{ sent?: true; error?: string }> {
   try {
-    const resp = await fetch(`${API_BASE}/api/auth/sign-in`, {
+    const resp = await fetch(`${API_BASE}/api/auth/request-code`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ firstName, lastName }),
+      body: JSON.stringify({ phoneNumber }),
     });
     const data = await resp.json();
-    if (!resp.ok) return { error: data?.error ?? "Couldn't sign in." };
+    return resp.ok ? { sent: true } : { error: data?.error ?? "Couldn't send a code to that number." };
+  } catch {
+    return { error: "Nova's backend isn't reachable — is it running on port 8787?" };
+  }
+}
+
+/** Step 2 of login: verify the code and, on success, store the session token. `displayName` is optional and purely cosmetic (NavBar greeting) — it never affects which account this signs into, only the phone number does. */
+export async function verifyCode(phoneNumber: string, code: string, displayName?: string): Promise<{ error?: string }> {
+  try {
+    const resp = await fetch(`${API_BASE}/api/auth/verify-code`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber, code, displayName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) return { error: data?.error ?? "That code didn't work." };
     commit({ token: data.token, userId: data.userId, displayName: data.displayName });
     return {};
   } catch {
