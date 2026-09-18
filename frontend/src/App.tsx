@@ -1,23 +1,20 @@
-import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { NavBar } from "./components/NavBar";
-import { LoginScreen } from "./components/LoginScreen";
 import { HomePage } from "./pages/HomePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ConnectorsPage } from "./pages/ConnectorsPage";
-import { useAuth, validateStoredSession } from "./lib/auth";
 
+// NOTE: phone-number accounts (lib/auth.ts, components/LoginScreen.tsx) are
+// fully built but not gating the app right now — paused specifically because
+// Twilio's compliance/ID-verification step was in the way of just using
+// Nova. The backend's routes accept requests with no session token and fall
+// back to a single shared "demo-user" (see routes/auth.ts's attachUser), so
+// there's nothing to log into. To turn login back on once Twilio's sorted
+// out: import useAuth/validateStoredSession and LoginScreen, and render
+// <LoginScreen /> in place of <Routes> whenever useAuth() is null
+// (validating any stored token once on mount first) — this file looked
+// exactly like that a moment ago, just ask to have it restored.
 export default function App() {
-  const auth = useAuth();
-  // A token restored from localStorage might be expired or revoked server-side
-  // — confirm it's still good once on load rather than trusting it forever.
-  // Until that check resolves, `checked` stays false so we show nothing
-  // instead of a login-screen flash for an already-logged-in user.
-  const [checked, setChecked] = useState(false);
-  useEffect(() => {
-    validateStoredSession().finally(() => setChecked(true));
-  }, []);
-
   return (
     <BrowserRouter>
       <div className="min-h-screen w-full bg-ink-950 relative overflow-x-hidden">
@@ -32,15 +29,11 @@ export default function App() {
 
         <div className="relative">
           <NavBar />
-          {!checked ? null : !auth ? (
-            <LoginScreen />
-          ) : (
-            <Routes>
-              <Route path="/" element={<HomePage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/connectors" element={<ConnectorsPage />} />
-            </Routes>
-          )}
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/connectors" element={<ConnectorsPage />} />
+          </Routes>
         </div>
       </div>
     </BrowserRouter>

@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { env } from "../config.js";
 import { initiateConnection, getAccountsByToolkit, getToolkitCatalog, getConnectOptions, connectWithCredentials } from "../services/composio.js";
-import { requireAuth } from "./auth.js";
+import { attachUser } from "./auth.js";
 
 const router = Router();
 
-router.get("/status", requireAuth, async (req, res) => {
+router.get("/status", attachUser, async (req, res) => {
   const userId = (req as any).userId;
   const configured = Boolean(env.COMPOSIO_API_KEY);
   try {
@@ -52,7 +52,7 @@ router.get("/catalog", async (req, res) => {
  * read or connect accounts under ANY user id just by passing a different
  * string. Now it's always the verified session's own id, never client input.
  */
-router.post("/connect", requireAuth, async (req, res) => {
+router.post("/connect", attachUser, async (req, res) => {
   const userId = (req as any).userId;
   const { toolkit } = req.body ?? {};
   if (!toolkit) return res.status(400).json({ error: "toolkit is required" });
@@ -72,7 +72,7 @@ router.post("/connect", requireAuth, async (req, res) => {
 });
 
 /** Completes a "credentials" mode connection (see /connect above) — the user's typed-in API key etc., no OAuth redirect. */
-router.post("/connect-with-credentials", requireAuth, async (req, res) => {
+router.post("/connect-with-credentials", attachUser, async (req, res) => {
   const userId = (req as any).userId;
   const { toolkit, scheme, credentials } = req.body ?? {};
   if (!toolkit || !scheme || !credentials || typeof credentials !== "object") {
