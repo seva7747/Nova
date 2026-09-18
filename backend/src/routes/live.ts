@@ -26,16 +26,18 @@ If the user starts talking while you're speaking, stop immediately and listen �
  * Appended to LIVE_INSTRUCTIONS only for a session opened automatically to
  * deliver a reminder (see useNovaConversation.ts) — the user never woke
  * Nova up or said anything, so the normal "wait for the user, then
- * delegate" behavior doesn't apply here. UNVERIFIED beyond this session's
- * own review: this relies on GPT-Live-1 actually speaking unprompted from
- * an instruction alone, with no prior delegation — every other proactive
- * announcement in this codebase (a finished background task) instead waits
- * for the user to say anything at all, then leads with it (see
- * liveDelegate.ts's handleDelegation). If this doesn't reliably speak on
- * its own in practice, that's the fallback shape to copy.
+ * delegate" behavior doesn't apply here.
+ *
+ * CONFIRMED BY TESTING: the proactive-speech mechanism itself works (it did
+ * speak, unprompted, right on time) — but the FIRST version of this
+ * instruction ("say exactly: X") wasn't forceful enough about VERBATIM: it
+ * came out garbled/embellished rather than the plain given text. Reworded
+ * to explicitly forbid any rephrasing, addition, or improvisation, and to
+ * repeat the message a second time as a hard constraint rather than
+ * trusting one mention of "exactly" to be enough.
  */
 function announceInstructions(message: string): string {
-  return `${LIVE_INSTRUCTIONS}\n\nThis session was opened automatically to deliver ONE specific reminder, not because the user said anything. The instant the session connects, before waiting for the user to speak at all, say exactly: "${message}" — then go back to normal behavior (wait for them to talk, delegate anything they say).`;
+  return `${LIVE_INSTRUCTIONS}\n\nThis session was opened automatically to deliver ONE specific reminder, not because the user said anything. The instant the session connects, before waiting for the user to speak at all, say this and ONLY this, word for word, with nothing added, removed, rephrased, or embellished: "${message}". Do not improvise a different way of saying it, do not add extra words before or after it, do not treat it as a topic to talk about — just say those exact words: "${message}". Then go back to normal behavior (wait for them to talk, delegate anything they say).`;
 }
 
 /**
