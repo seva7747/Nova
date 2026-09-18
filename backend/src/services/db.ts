@@ -26,17 +26,10 @@ export const db = new DatabaseSync(path.join(DATA_DIR, "nova.db"));
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,              -- the user's own phone number (E.164-ish), doubles as the Composio/GPT-Live "userId" used everywhere else
-    phone_number TEXT UNIQUE NOT NULL,
-    display_name TEXT,
+    id TEXT PRIMARY KEY,              -- a slug derived from "First Last" (see services/auth.ts's slugifyName) — this IS the Composio/GPT-Live "userId" used everywhere else
+    display_name TEXT,                -- "First Last" as typed
+    phone_number TEXT UNIQUE,         -- only set for accounts created by texting Nova's number (see smsDelegate.ts) — nullable, since name-based sign-in never sets it
     created_at INTEGER NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS otp_codes (
-    phone_number TEXT PRIMARY KEY,
-    code TEXT NOT NULL,
-    expires_at INTEGER NOT NULL,
-    attempts INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
@@ -46,3 +39,29 @@ db.exec(`
     expires_at INTEGER NOT NULL
   );
 `);
+
+// Self-healing migration for the OLD schema (back when a phone number WAS
+// the identity, before name-based sign-in): phone_number used to be NOT
+// NULL, which breaks every name-based sign-up. CONFIRMED BY TESTING: deleting
+// backend/data/nova.db by hand to force a fresh schema doesn't reliably
+// work either — this project's folder lives inside OneDrive sync, which
+// silently restored the deleted file from its own cache a moment later. So
+// migrate in place instead of depending on the file being gone. SQLite has
+// no ALTER COLUMN to drop a NOT NULL constraint directly — the standard
+// workaround is rebuild-and-swap.
+const usersInfo = db.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string; notnull: number }>;
+const phoneNumberCol = usersInfo.find((c) => c.name === "phone_number");
+if (phoneNumberCol?.notnull) {
+  console.log("[db] migrating users table: phone_number NOT NULL → nullable (old phone-based schema)");
+  db.exec(`
+    CREATE TABLE users_new (
+      id TEXT PRIMARY KEY,
+      display_name TEXT,
+      phone_number TEXT UNIQUE,
+      created_at INTEGER NOT NULL
+    );
+    INSERT INTO users_new (id, display_name, phone_number, created_at) SELECT id, display_name, phone_number, created_at FROM users;
+    DROP TABLE users;
+    ALTER TABLE users_new RENAME TO users;
+  `);
+}

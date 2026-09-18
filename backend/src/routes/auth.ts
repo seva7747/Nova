@@ -1,5 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { normalizePhoneNumber, requestCode, verifyCode, getUserIdForSession, logout } from "../services/auth.js";
+import { signIn, getUserIdForSession, getDisplayName, logout } from "../services/auth.js";
 
 const router = Router();
 
@@ -20,13 +20,12 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 /**
- * Non-blocking stand-in for requireAuth, wired into the app's routes for now
- * instead of it: the phone-login flow above is fully built, but real accounts
- * are on pause while just testing Nova/connectors directly (no login step in
- * the way). Resolves userId from a session token when one's actually present
- * (so logging in still works if you do it), otherwise falls back to a single
- * shared "demo-user" — the same no-accounts behavior as before Phase 1.
- * Swap a route from this back to requireAuth to make login required again.
+ * Non-blocking stand-in for requireAuth — was wired into the app's routes
+ * while accounts were on pause for solo testing (no login step in the way),
+ * falling back to a single shared "demo-user" when no token was present.
+ * Now that more than one person actually uses Nova, every route uses
+ * requireAuth instead so connected accounts don't collide. Kept here,
+ * unused, in case there's ever a reason to go back to frictionless testing.
  */
 export function attachUser(req: Request, _res: Response, next: NextFunction) {
   const header = req.headers.authorization ?? "";
@@ -36,33 +35,24 @@ export function attachUser(req: Request, _res: Response, next: NextFunction) {
   next();
 }
 
-/** Step 1 of login: text a 6-digit code to the given phone number. */
-router.post("/request-code", (req, res) => {
-  const phoneNumber = normalizePhoneNumber(String(req.body?.phoneNumber ?? ""));
-  if (!phoneNumber) return res.status(400).json({ error: "That doesn't look like a valid phone number." });
-
-  const code = requestCode(phoneNumber);
-  // TODO once Twilio is wired up: send `code` as a real text to `phoneNumber`
-  // via the Twilio Messaging API instead of just logging it. Until then this
-  // IS the delivery mechanism — check the backend terminal for the code.
-  console.log(`[auth] verification code for ${phoneNumber}: ${code}`);
-  res.json({ sent: true });
-});
-
-/** Step 2 of login: verify the code, get back a session token. */
-router.post("/verify-code", (req, res) => {
-  const phoneNumber = normalizePhoneNumber(String(req.body?.phoneNumber ?? ""));
-  const code = String(req.body?.code ?? "");
-  if (!phoneNumber || !code) return res.status(400).json({ error: "phoneNumber and code are required" });
-
-  const result = verifyCode(phoneNumber, code);
+/**
+ * Sign in with just a first + last name — no password, no verification code.
+ * Creates the account on first use; signing in again with the same name
+ * returns to that same account. See services/auth.ts's signIn for the real
+ * tradeoff this makes (good enough to tell people apart, not real security).
+ */
+router.post("/sign-in", (req, res) => {
+  const firstName = String(req.body?.firstName ?? "");
+  const lastName = String(req.body?.lastName ?? "");
+  const result = signIn(firstName, lastName);
   if (result.ok === false) return res.status(400).json({ error: result.error });
-  res.json({ token: result.token, userId: result.userId });
+  res.json({ token: result.token, userId: result.userId, displayName: result.displayName });
 });
 
-/** Lets the frontend check whether a stored session token is still valid (e.g. after a page reload). */
+/** Lets the frontend check whether a stored session token is still valid (e.g. after a page reload), and re-fetch the current display name. */
 router.get("/me", requireAuth, (req, res) => {
-  res.json({ userId: (req as any).userId });
+  const userId = (req as any).userId;
+  res.json({ userId, displayName: getDisplayName(userId) });
 });
 
 router.post("/logout", (req, res) => {

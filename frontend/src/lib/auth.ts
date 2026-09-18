@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { API_BASE } from "./env";
 
-export type AuthState = { token: string; userId: string } | null;
+export type AuthState = { token: string; userId: string; displayName: string } | null;
 
 const STORAGE_KEY = "nova-auth";
 
@@ -54,32 +54,23 @@ export function useAuth() {
   return auth;
 }
 
-/** Step 1 of login: text a 6-digit code to this phone number. */
-export async function requestCode(phoneNumber: string): Promise<{ sent?: true; error?: string }> {
+/**
+ * Signs in with just a first + last name — no password, no verification
+ * step. Creates the account on first use; the same name always returns to
+ * the same account (see backend/src/services/auth.ts's signIn for the real
+ * tradeoff this makes — good enough to tell people apart and keep connected
+ * integrations separate, not real security).
+ */
+export async function signIn(firstName: string, lastName: string): Promise<{ error?: string }> {
   try {
-    const resp = await fetch(`${API_BASE}/api/auth/request-code`, {
+    const resp = await fetch(`${API_BASE}/api/auth/sign-in`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phoneNumber }),
+      body: JSON.stringify({ firstName, lastName }),
     });
     const data = await resp.json();
-    return resp.ok ? { sent: true } : { error: data?.error ?? "Couldn't send a code to that number." };
-  } catch {
-    return { error: "Nova's backend isn't reachable — is it running on port 8787?" };
-  }
-}
-
-/** Step 2 of login: verify the code and, on success, store the session token. */
-export async function verifyCode(phoneNumber: string, code: string): Promise<{ error?: string }> {
-  try {
-    const resp = await fetch(`${API_BASE}/api/auth/verify-code`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phoneNumber, code }),
-    });
-    const data = await resp.json();
-    if (!resp.ok) return { error: data?.error ?? "That code didn't work." };
-    commit({ token: data.token, userId: data.userId });
+    if (!resp.ok) return { error: data?.error ?? "Couldn't sign in." };
+    commit({ token: data.token, userId: data.userId, displayName: data.displayName });
     return {};
   } catch {
     return { error: "Nova's backend isn't reachable — is it running on port 8787?" };
@@ -98,6 +89,7 @@ export function logout() {
 /**
  * Confirms a token restored from localStorage is still valid (not expired,
  * not revoked) rather than trusting it forever — call once on app start.
+ * Also refreshes the stored display name in case it changed elsewhere.
  * Left alone on a network error (offline shouldn't look like logged-out).
  */
 export async function validateStoredSession() {
@@ -105,7 +97,12 @@ export async function validateStoredSession() {
   if (!token) return;
   try {
     const resp = await fetch(`${API_BASE}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!resp.ok) commit(null);
+    if (!resp.ok) {
+      commit(null);
+      return;
+    }
+    const data = await resp.json();
+    if (current) commit({ ...current, displayName: data?.displayName ?? current.displayName });
   } catch {
     /* offline — keep the token, don't log the user out just because we couldn't check */
   }

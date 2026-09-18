@@ -2,7 +2,7 @@ import { Router } from "express";
 import { env } from "../config.js";
 import { createLiveSession } from "../services/live.js";
 import { attachLiveDelegate } from "../services/liveDelegate.js";
-import { attachUser } from "./auth.js";
+import { requireAuth } from "./auth.js";
 
 const router = Router();
 
@@ -28,7 +28,7 @@ If the user starts talking while you're speaking, stop immediately and listen â€
  * that never leaves the server), and attach a backend "sideband" connection
  * to the new session so Claude + Composio can drive it (see liveDelegate.ts).
  */
-router.post("/session", attachUser, async (req, res) => {
+router.post("/session", requireAuth, async (req, res) => {
   const start = Date.now();
   try {
     const userId = (req as any).userId;

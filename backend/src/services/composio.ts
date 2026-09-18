@@ -526,12 +526,26 @@ export async function connectWithCredentials(
 }
 
 /** List the user's connected accounts (used to show "Connected" badges in the UI). */
+/**
+ * CONFIRMED BY TESTING: the SDK's `client.connectedAccounts.list({ userId })`
+ * silently ignores that filter — it was returning EVERY connected account on
+ * the whole API key/project, regardless of which userId was actually passed.
+ * This went unnoticed for a long time because this app only ever had one
+ * real user ("demo-user"), so "everyone's accounts" and "demo-user's
+ * accounts" were the same set. It surfaced the moment a second real account
+ * existed: signing in as a brand new person showed every integration
+ * "demo-user" had ever connected — Gmail, Canvas, Alpaca, all of it —
+ * instead of a clean slate, completely defeating per-person isolation. Raw
+ * REST with the documented `user_ids` query param filters correctly (verified
+ * directly against the API: 0 results for a fresh userId, the real 10 for
+ * "demo-user"). Ported off the SDK method the same way initiateConnection()
+ * already was, for the same reason (see the file-level comment above).
+ */
 export async function listConnections(userId: string): Promise<any[]> {
-  const client = await getClient();
-  if (!client) return [];
+  if (!env.COMPOSIO_API_KEY) return [];
   try {
-    const result = await client.connectedAccounts.list({ userId });
-    return result?.items ?? (Array.isArray(result) ? result : []);
+    const data = await composioFetch(`/connected_accounts?user_ids=${encodeURIComponent(userId)}&limit=100`);
+    return data?.items ?? [];
   } catch (err: any) {
     console.error("[composio] failed to list connected accounts:", err?.error?.message ?? err?.message ?? err);
     return [];
