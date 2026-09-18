@@ -37,10 +37,14 @@ export const env = {
   // tool schemas alone (35+ real tools across Gmail/Calendar/Canvas/
   // Composio) already request ~21k tokens before any conversation even
   // starts, so EVERY request failed outright, not just under heavy use.
-  // Landed on Gemini 2.5 Flash-Lite via Google's OpenAI-compatible endpoint
-  // (see llm.ts) instead: genuinely cheap ($0.10/$0.40 per million tokens)
-  // without that same tight per-minute wall.
-  GEMINI_MODEL: optional("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+  // Landed on Gemini via Google's OpenAI-compatible endpoint (see llm.ts)
+  // instead: genuinely cheap, no tight per-minute wall like Groq's.
+  // gemini-2.5-flash-lite (the cheapest model at $0.10/$0.40 per million
+  // tokens) is CONFIRMED BY TESTING to 404 for new API keys — Google's own
+  // error names gemini-3.5-flash-lite as the replacement, at $0.30/$2.50 per
+  // million tokens — still cheap in absolute terms, just not the very
+  // cheapest one on paper.
+  GEMINI_MODEL: optional("GEMINI_MODEL", "gemini-3.5-flash-lite"),
 
   // Note: there's no COMPOSIO_TOOLKITS allowlist anymore — which services
   // Claude can use is now driven entirely by which ones the user has
