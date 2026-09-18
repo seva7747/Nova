@@ -41,12 +41,6 @@ export function useNovaConversation() {
   const liveNovaSpeakingTimerRef = useRef<number | undefined>(undefined);
   const liveThinkingToIdleTimerRef = useRef<number | undefined>(undefined);
   const [taskLight, setTaskLight] = useState<TaskLight>("none");
-  // armLiveIdleTimer's setTimeout closure needs the CURRENT taskLight, not
-  // whatever it was when the timer was armed — a ref (same pattern as
-  // settingsRef/stateRef below) is how a closure sees a live value instead
-  // of a stale one from whenever it was created.
-  const taskLightRef = useRef<TaskLight>(taskLight);
-  taskLightRef.current = taskLight;
 
   const pushLog = useCallback((entry: Omit<LogEntry, "id">) => {
     setLog((l) => [...l.slice(-40), { ...entry, id: makeId() }]);
@@ -98,28 +92,18 @@ export function useNovaConversation() {
    * setting as that grace period, with a floor so turning that setting off
    * doesn't mean "hang up instantly."
    *
-   * CONFIRMED BY TESTING (real feedback): a big background task (e.g. "add
-   * my whole semester's classes to the calendar") can easily run well past
-   * this idle window with the user rightly staying quiet and waiting — the
-   * session would hang up out from under it, dropping the orb back to the
-   * "say Nova" wake-listening screen and making it look like Nova just gave
-   * up, even though the task itself keeps working server-side regardless of
-   * whether this session is open (see liveDelegate.ts's runBackgroundTask).
-   * So: while a task is actively running for this user, DON'T close on
-   * idle — just check again after the same grace period instead. Silence is
-   * expected and fine while something's genuinely being worked on; only
-   * silence with nothing running counts as "actually idle."
+   * Deliberately closes on idle EVEN IF a background task is still running —
+   * confirmed this is what's actually wanted: the task itself runs on Claude
+   * Haiku regardless of whether this ($0.05/min) session stays open (see
+   * liveDelegate.ts's runBackgroundTask), so there's no reason to keep
+   * paying for GPT-Live to sit there listening to silence while it works.
+   * The task keeps going in the background either way; see handleDelegation's
+   * "by-the-way" handling for how its result gets announced once you're back.
    */
   const armLiveIdleTimer = useCallback(() => {
     clearLiveIdleTimer();
     const idleMs = Math.max(settingsRef.current.followUpMs || 0, 8000);
-    liveIdleTimerRef.current = window.setTimeout(() => {
-      if (taskLightRef.current === "running") {
-        armLiveIdleTimer();
-        return;
-      }
-      liveConnRef.current?.close();
-    }, idleMs);
+    liveIdleTimerRef.current = window.setTimeout(() => liveConnRef.current?.close(), idleMs);
   }, [clearLiveIdleTimer]);
 
   /** Opens one persistent GPT-Live-1 WebRTC session and drives the orb/transcript state off its events until it closes. */

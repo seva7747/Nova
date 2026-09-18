@@ -137,39 +137,71 @@ function withToolCaching(tools: any[]): any[] {
 const MAX_HISTORY_CHARS = 400_000; // ~100k tokens at ~4 chars/token — well under the 200k window, leaving room for the system prompt, tool schemas, and response
 
 /**
- * Drops the oldest whole turns from `messages` once its total size crosses
- * MAX_HISTORY_CHARS, always keeping at least the most recent turn. A "turn"
- * starts at a message that's the user's own plain-text question (role
- * "user" with STRING content) — as opposed to a tool_result message (role
- * "user" but ARRAY content), which must stay glued to the assistant
- * tool_use message right before it. Cutting only at these boundaries means
- * every tool_use/tool_result pair that survives the trim is always complete
- * — never orphaned the way the session-corruption bug elsewhere in this file
- * was.
+ * Drops messages from the MIDDLE of `messages` once its total size crosses
+ * MAX_HISTORY_CHARS, always keeping message 0 (the original request) AND as
+ * much of the recent tail as fits.
+ *
+ * CONFIRMED BY TESTING, TWICE:
+ *
+ * 1. The original version of this only ever kept the most recent tail,
+ *    dropping the OLDEST turns first — which, given a long enough session,
+ *    eventually dropped the user's original request itself, since it was
+ *    "oldest" relative to a constantly growing pile of newer tool calls.
+ *    Claude then kept working from memory of only its own recent tool
+ *    calls, with no way to re-check what it was actually asked for.
+ *
+ * 2. Fixing that by pinning "the first turn" and only trimming middle
+ *    TURNS (boundary = a plain-string user message) turned out not to
+ *    engage at all for the case that actually matters most: a long
+ *    background task (e.g. filling in ~2 months of a class schedule) is
+ *    ONE continuous turn from the model's-eye view — a single initial
+ *    request followed by many (assistant tool_use, user tool_result)
+ *    rounds with no further plain-text user turn in between — so
+ *    turn-counting saw only 1 "turn" and never trimmed at all, letting
+ *    history grow completely unbounded through a long task instead of
+ *    gradually. THIS is why later parts of a long task came out
+ *    inconsistent or wrong while the beginning (before history ever got
+ *    big enough to matter) was correct.
+ *
+ * Fixed properly by cutting at ROUND boundaries instead of turn boundaries:
+ * any {role: "assistant"} message safely starts a fresh, self-contained
+ * unit (it's never itself split across a trim, and everything from it
+ * onward — its own tool_result if it made one, then whatever comes next —
+ * is a complete, valid sequence). Message 0 (always the session's or task's
+ * own opening user message) is pinned permanently; the tail then grows
+ * backward from the most recent assistant-message boundary until it no
+ * longer fits.
  */
 function trimMessageHistory(messages: any[]): any[] {
   const originalSize = JSON.stringify(messages).length;
   if (originalSize <= MAX_HISTORY_CHARS) return messages;
 
-  const turnStarts = messages
-    .map((m, i) => (m.role === "user" && typeof m.content === "string" ? i : -1))
-    .filter((i) => i >= 0);
+  const roundStarts = messages.map((m, i) => (i > 0 && m.role === "assistant" ? i : -1)).filter((i) => i >= 0);
+  if (roundStarts.length === 0) {
+    // Nothing but the opening message and its immediate tool_result, if
+    // any — already as small as this can get.
+    console.warn(`[llm] conversation history still large (${originalSize} chars) with nothing left to trim`);
+    return messages;
+  }
 
-  for (let i = 0; i < turnStarts.length - 1; i++) {
-    const candidate = messages.slice(turnStarts[i + 1]);
+  const head = [messages[0]];
+  for (let i = 0; i < roundStarts.length; i++) {
+    const candidate = [...head, ...messages.slice(roundStarts[i])];
     if (JSON.stringify(candidate).length <= MAX_HISTORY_CHARS) {
       console.log(
-        `[llm] trimmed conversation history: ${messages.length} messages (${originalSize} chars) → ${candidate.length} messages, dropped ${i + 1} oldest turn(s)`
+        `[llm] trimmed conversation history: ${messages.length} messages (${originalSize} chars) → ${candidate.length} messages (kept the original request), dropped ${roundStarts[i] - 1} middle message(s)`
       );
       return candidate;
     }
   }
-  // Even just the most recent turn alone doesn't fit — nothing smaller left
-  // to try (the per-tool-result cap below makes this rare). Return it anyway
-  // rather than give up; a huge single turn is still more likely to succeed
-  // than the full, larger history.
-  console.warn(`[llm] conversation history still large (${originalSize} chars) after trimming to the most recent turn`);
-  return turnStarts.length > 0 ? messages.slice(turnStarts[turnStarts.length - 1]) : messages;
+  // Not even the original request plus the single most recent round fits
+  // under budget — return that smallest-possible candidate anyway (still
+  // oversized) rather than give up. Keeping `head` here isn't optional: the
+  // API requires the conversation to start with role "user", and every
+  // round boundary is an "assistant" message — dropping head would leave
+  // this starting with the wrong role, not just a bigger history.
+  console.warn(`[llm] conversation history still large (${originalSize} chars) even after trimming to the original request + most recent round`);
+  return [...head, ...messages.slice(roundStarts[roundStarts.length - 1])];
 }
 
 type ConversationTurnArgs = {

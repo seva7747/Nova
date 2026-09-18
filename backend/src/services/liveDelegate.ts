@@ -110,14 +110,15 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
     const beforeTurn = messages.length;
 
     // A background task that finished since the last question gets mentioned
-    // now, as a "by the way" after the real answer — not spoken the moment it
-    // finished, when the user might have been mid-conversation (or gone).
+    // the moment the user says anything at all — leading with it, not
+    // buried as an afterthought — since reconnecting to Nova after a task
+    // was running is usually exactly to find out whether it's done.
     const finished = takeUnannounced(ctx.userId);
     let content = userText;
     if (finished.length > 0) {
       const summary = finished.map((t) => `"${t.description}" → ${t.result}`).join(" / ");
-      content += `\n\n[System note, not said by the user: a background task you were running has finished since their last question: ${summary}. Answer their question above first, then add one short "by the way" sentence telling them it's done and the key outcome.]`;
-      console.log(`[live] delegation ${delegationId} will mention ${finished.length} finished task(s) as a by-the-way`);
+      content += `\n\n[System note, not said by the user: a background task you were running just finished: ${summary}. Start your reply with a short, clear "Done — " statement of the outcome, before anything else — this is likely why they're checking in. THEN answer whatever they said above, if it was a real question.]`;
+      console.log(`[live] delegation ${delegationId} will lead with ${finished.length} finished task(s)`);
     }
     messages.push({ role: "user", content });
 
