@@ -18,6 +18,15 @@ function makeId() {
 }
 
 /**
+ * Matches ONLY when the user's whole utterance is essentially just "stop"
+ * (optionally with "Nova", "please", "talking", etc. mixed in) — anchored at
+ * both ends specifically so an unrelated sentence that happens to CONTAIN
+ * the word ("can you stop by the store") never matches, only a short,
+ * dedicated command to be quiet.
+ */
+const STOP_COMMAND = /^(hey[, ]+)?(nova[, ]+)?(ok(ay)?[, ]+)?(please[, ]+)?(stop|shut up|be quiet|quiet down)([, ]*(talking|nova))?([, ]*(please|now))?[.!?]*$/i;
+
+/**
  * Nova's whole voice pipeline is GPT-Live-1 (see useNovaLive.ts for the
  * WebRTC transport, backend/src/services/liveDelegate.ts for how it hands
  * off to Claude + Composio). This hook is the state machine wrapped around
@@ -37,6 +46,7 @@ export function useNovaConversation() {
   const liveConnRef = useRef<LiveConnection | null>(null);
   const liveIdleTimerRef = useRef<number | undefined>(undefined);
   const liveUserEntryIdRef = useRef<string | null>(null);
+  const liveUserBufferRef = useRef(""); // raw (undisplayed-formatting) text of the CURRENT utterance, just for STOP_COMMAND matching
   const liveNovaEntryIdRef = useRef<string | null>(null);
   const liveNovaSpeakingTimerRef = useRef<number | undefined>(undefined);
   const liveThinkingToIdleTimerRef = useRef<number | undefined>(undefined);
@@ -130,14 +140,27 @@ export function useNovaConversation() {
           if (liveUserEntryIdRef.current === null) {
             const id = makeId();
             liveUserEntryIdRef.current = id;
+            liveUserBufferRef.current = delta;
             setLog((l) => [...l.slice(-40), { id, role: "user", text: delta }]);
           } else {
             const id = liveUserEntryIdRef.current;
+            liveUserBufferRef.current += delta;
             setLog((l) => l.map((e) => (e.id === id ? { ...e, text: e.text + delta } : e)));
+          }
+          // CONFIRMED BY TESTING (real feedback): saying "stop" should shut
+          // Nova up and hang up immediately — not go through a full
+          // Claude round trip like a normal request, which is both slow and
+          // pointless for a plain "be quiet" command. Checked on every delta
+          // rather than waiting for the utterance to finish, so it fires the
+          // instant enough has been said to match — for a genuine one-word
+          // "stop," that's essentially the whole utterance anyway.
+          if (STOP_COMMAND.test(liveUserBufferRef.current.trim())) {
+            liveConnRef.current?.close();
           }
         },
         onDelegating: () => {
           liveUserEntryIdRef.current = null; // that turn's transcript is complete — next delta starts a fresh bubble
+          liveUserBufferRef.current = "";
           window.clearTimeout(liveThinkingToIdleTimerRef.current); // a new request is definitely not "idle"
           setState("thinking");
         },
@@ -162,14 +185,21 @@ export function useNovaConversation() {
           // TESTING: a single ~2s cutoff straight to "live-idle" made the orb
           // look finished within a couple seconds of ANY pause — including
           // the completely normal gap between Nova's instant "sure, one
-          // sec" and the real answer, which routinely takes several seconds
-          // once a Composio/Claude tool call is involved. So: a short pause
-          // now only means "stop growing this speech bubble" and shows
-          // "thinking" (still working, just not talking this instant) — only
-          // a much longer continued silence after that is treated as
-          // actually done and allowed to go idle / start the paid-session
-          // close countdown. Any further speech (or the user talking)
-          // cancels this at either stage.
+          // sec" and the real answer. So: a short pause now only means "stop
+          // growing this speech bubble" and shows "thinking" — only a bit
+          // more continued silence after that is treated as actually done.
+          //
+          // CONFIRMED BY TESTING (real feedback): this second stage used to
+          // be 20 seconds, meaning the true total time from Nova's last word
+          // to the session actually closing was ~1.8s + 20s + the 8s(min)
+          // idle timer below — nearly 30 seconds of billed GPT-Live time
+          // after she'd clearly finished, not the "~8 seconds" the idle
+          // timer's own number suggests. Cut way down: background tasks
+          // don't need the live session to stay open anyway (they keep
+          // running regardless — see liveDelegate.ts), so there's much less
+          // reason to wait this long before even STARTING the real
+          // idle-close countdown. Any further speech (or the user talking)
+          // still cancels this at either stage, same as before.
           liveNovaSpeakingTimerRef.current = window.setTimeout(() => {
             liveNovaEntryIdRef.current = null;
             setState((s) => (s === "off" ? s : "thinking"));
@@ -182,6 +212,7 @@ export function useNovaConversation() {
         onClosed: () => {
           liveConnRef.current = null;
           liveUserEntryIdRef.current = null;
+          liveUserBufferRef.current = "";
           liveNovaEntryIdRef.current = null;
           window.clearTimeout(liveNovaSpeakingTimerRef.current);
           window.clearTimeout(liveThinkingToIdleTimerRef.current);

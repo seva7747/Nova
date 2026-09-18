@@ -17,7 +17,7 @@ export const setReminderTool = {
       message: {
         type: "string",
         description:
-          'What to say when the reminder fires, phrased exactly as Nova should say it out loud — this gets spoken VERBATIM later, with no rephrasing, so write it as a complete, natural sentence, not a note-to-self. If the user said what to be reminded of, use that (e.g. "time to check the oven"). If they only asked for a plain timer with no stated reason ("set a timer for one minute," "remind me in 30 seconds"), just use a short, plain, generic sentence naming the duration — e.g. "Your one-minute timer is up." or "Your 30-second reminder is done." — never invent a reason, topic, or embellishment that wasn\'t actually said.',
+          'What to say when the reminder fires, phrased exactly as Nova should say it out loud — this gets spoken VERBATIM later, with no rephrasing, so write it as a complete, natural sentence, not a note-to-self. Standard phrasing, so it always sounds consistent: if the user said what to be reminded of, say "Your reminder to <do the thing>" — e.g. asked to be reminded to call Michael becomes "Your reminder to call Michael." (not "your reminder to call Michael is up" or anything longer — just that). If they only asked for a plain timer with no stated reason ("set a timer for one minute," "remind me in 30 seconds"), use "Your <duration> timer is up." instead — e.g. "Your one-minute timer is up." Never invent a reason, topic, or embellishment that wasn\'t actually said.',
       },
       delaySeconds: {
         type: "integer",
