@@ -1,0 +1,20 @@
+{
+  "name": "nova-assistant",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Nova — an Alexa-style voice assistant demo (web) wired to Gmail, Google Calendar, weather, sports and more via Composio.",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n BACKEND,FRONTEND -c blue,green \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "build": "npm run build -w backend && npm run build -w frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=18.17"
+  }
+}

@@ -1,0 +1,162 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: #06070b;
+  color: #e7e9f0;
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+@keyframes nova-pulse-ring {
+  0% {
+    transform: scale(0.92);
+    opacity: 0.55;
+  }
+  70% {
+    transform: scale(1.14);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.14);
+    opacity: 0;
+  }
+}
+
+@keyframes nova-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes nova-spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes nova-bar {
+  0%,
+  100% {
+    transform: scaleY(0.25);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes nova-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes nova-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Generic rotation — duration is set per-use via inline style so the same
+   keyframe drives the slow idle chase, the medium "listening" chase, and the
+   fast "thinking" chase without duplicating a keyframe per speed. */
+@keyframes nova-rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-nova-rotate {
+  animation-name: nova-rotate;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+/* One-shot "power on" light sweep: the ring spins up and brightens in a
+   single motion, like a device's light ring waking up. */
+@keyframes nova-power-on {
+  0% {
+    opacity: 0;
+    transform: scale(0.7) rotate(0deg);
+  }
+  55% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(320deg);
+  }
+}
+
+.animate-nova-power-on {
+  animation: nova-power-on 0.85s cubic-bezier(0.15, 0.7, 0.3, 1) both;
+}
+
+.animate-nova-pulse-ring {
+  animation: nova-pulse-ring 2.4s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+}
+
+.animate-nova-breathe {
+  animation: nova-breathe 3.2s ease-in-out infinite;
+}
+
+.animate-nova-spin-slow {
+  animation: nova-spin-slow 6s linear infinite;
+}
+
+.animate-nova-fade-up {
+  animation: nova-fade-up 0.35s ease-out both;
+}
+
+.nova-bar {
+  animation: nova-bar 0.9s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.nova-dot {
+  animation: nova-dot 1.2s ease-in-out infinite;
+}
+
+::selection {
+  background: rgba(96, 165, 250, 0.35);
+}
+
+/* Slim, unobtrusive scrollbar for the transcript panel */
+.nova-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.nova-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
