@@ -9,6 +9,7 @@ import {
   runCheckBackgroundTasks,
   runCancelBackgroundTask,
 } from "./backgroundTasks.js";
+import { setReminderTool, runSetReminder } from "./reminder.js";
 import { env } from "../config.js";
 
 /**
@@ -39,6 +40,7 @@ export const staticTools = [
   addCalendarEventTool,
   checkBackgroundTasksTool,
   cancelBackgroundTaskTool,
+  setReminderTool,
 ];
 
 /** Tool names/prefixes that represent a "real world" action worth talking over. */
@@ -96,6 +98,8 @@ export async function executeTool(name: string, input: any, ctx: { userId: strin
       return runCheckBackgroundTasks(ctx);
     case "cancel_background_task":
       return runCancelBackgroundTask(input, ctx);
+    case "set_reminder":
+      return runSetReminder(input, ctx);
     default: {
       // Anything not defined above is assumed to be a Composio-provided tool
       // (e.g. GMAIL_SEND_EMAIL, GOOGLECALENDAR_CREATE_EVENT). web_search never

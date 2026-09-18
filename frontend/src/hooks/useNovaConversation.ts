@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useWakeWordEngine } from "./useWakeWordEngine";
 import { useNovaSettings } from "./useNovaSettings";
 import { useNovaLive, type LiveConnection } from "./useNovaLive";
-import { fetchTaskStatus } from "../lib/api";
+import { fetchTaskStatus, fetchDueReminder } from "../lib/api";
 
 // "live-idle" = a GPT-Live-1 voice session is open and Nova is just waiting
 // for you to talk (no wake word needed mid-session) — distinct from
@@ -106,8 +106,15 @@ export function useNovaConversation() {
     liveIdleTimerRef.current = window.setTimeout(() => liveConnRef.current?.close(), idleMs);
   }, [clearLiveIdleTimer]);
 
-  /** Opens one persistent GPT-Live-1 WebRTC session and drives the orb/transcript state off its events until it closes. */
-  const beginCommand = useCallback(async () => {
+  /**
+   * Opens one persistent GPT-Live-1 WebRTC session and drives the orb/
+   * transcript state off its events until it closes. `announce`, when
+   * given, is for a reminder firing with nobody having said anything —
+   * see the reminder-polling effect below — and gets passed through to
+   * routes/live.ts so Nova speaks it the instant the session connects,
+   * before waiting for the user to talk at all.
+   */
+  const beginCommand = useCallback(async (announce?: string) => {
     if (busyRef.current) return;
     busyRef.current = true;
     setState("powering-on");
@@ -115,6 +122,7 @@ export function useNovaConversation() {
       const conn = await liveConnect({
         timezone: settingsRef.current.timezone || undefined,
         voice: settingsRef.current.liveVoiceName || undefined,
+        announce,
         onUserTranscript: (delta) => {
           clearLiveIdleTimer();
           window.clearTimeout(liveThinkingToIdleTimerRef.current); // they're talking — definitely not idle, whatever we were about to conclude
@@ -193,6 +201,24 @@ export function useNovaConversation() {
       setState((s) => (s === "off" ? s : "wake-listening"));
     }
   }, [liveConnect, pushLog, armLiveIdleTimer, clearLiveIdleTimer]);
+
+  // Polls a plain HTTP endpoint (free — no GPT-Live session needed) so a
+  // reminder set during a PAST session still gets spoken exactly when it's
+  // due, even though that session (and the $0.05/min it was billing) is long
+  // closed by then. Only fires while merely idling on the wake word
+  // ("wake-listening") — never while a live session is already open (its own
+  // conversation takes priority; the reminder just waits for the next poll)
+  // and never while fully unplugged ("off" — the user turned Nova off on
+  // purpose, so no auto-connecting behind their back).
+  useEffect(() => {
+    const poll = async () => {
+      if (stateRef.current !== "wake-listening" || busyRef.current) return;
+      const due = await fetchDueReminder();
+      if (due) beginCommand(due.message);
+    };
+    const interval = window.setInterval(poll, 2500);
+    return () => window.clearInterval(interval);
+  }, [beginCommand]);
 
   const {
     supported: wakeWordSupported,

@@ -7,6 +7,7 @@ import authRouter from "./routes/auth.js";
 import integrationsRouter from "./routes/integrations.js";
 import liveRouter from "./routes/live.js";
 import tasksRouter from "./routes/tasks.js";
+import remindersRouter from "./routes/reminders.js";
 import smsRouter from "./routes/sms.js";
 import voiceCallRouter from "./routes/voiceCall.js";
 import { attachVoiceCallDelegate } from "./services/voiceCallDelegate.js";
@@ -37,6 +38,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/integrations", integrationsRouter);
 app.use("/api/live", liveRouter);
 app.use("/api/tasks", tasksRouter);
+app.use("/api/reminders", remindersRouter);
 app.use("/api/sms", smsRouter);
 app.use("/api/voice-call", voiceCallRouter);
 

@@ -31,7 +31,14 @@ export function useNovaLive() {
   const meterRafRef = useRef(0);
 
   const connect = useCallback(
-    async (opts: { timezone?: string; voice?: string } & LiveCallbacks): Promise<LiveConnection> => {
+    async (
+      opts: {
+        timezone?: string;
+        voice?: string;
+        /** Set only for a session opened automatically to deliver a reminder (see useNovaConversation.ts) — Nova speaks this the instant the session connects, unprompted, instead of waiting for the user to talk first. */
+        announce?: string;
+      } & LiveCallbacks
+    ): Promise<LiveConnection> => {
       const pc = new RTCPeerConnection();
       const remoteAudio = new Audio();
       remoteAudio.autoplay = true;
@@ -178,7 +185,7 @@ export function useNovaLive() {
         resp = await fetch(`${API_BASE}/api/live/session`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({ sdp, timezone: opts.timezone, voice: opts.voice }),
+          body: JSON.stringify({ sdp, timezone: opts.timezone, voice: opts.voice, announce: opts.announce }),
         });
       } catch {
         cleanup();

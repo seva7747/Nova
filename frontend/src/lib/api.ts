@@ -90,3 +90,15 @@ export async function fetchTaskStatus(): Promise<TaskStatus | null> {
     return null;
   }
 }
+
+/** Polled while plugged in so a reminder set during a past session still gets spoken exactly when due — see backend/src/services/reminders.ts. Each due reminder is only ever returned once (the backend marks it delivered on the way out). */
+export async function fetchDueReminder(): Promise<{ message: string } | null> {
+  try {
+    const resp = await fetch(`${API_BASE}/api/reminders/due`, { headers: authHeaders() });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data?.due ?? null;
+  } catch {
+    return null;
+  }
+}

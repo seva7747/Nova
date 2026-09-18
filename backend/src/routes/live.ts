@@ -23,6 +23,22 @@ When the backend's commentary arrives, that is the real answer: speak it natural
 If the user starts talking while you're speaking, stop immediately and listen — treat what they say as a brand new request. Background noise or a short "mm" from the user isn't a new request — only stop for actual speech.`;
 
 /**
+ * Appended to LIVE_INSTRUCTIONS only for a session opened automatically to
+ * deliver a reminder (see useNovaConversation.ts) — the user never woke
+ * Nova up or said anything, so the normal "wait for the user, then
+ * delegate" behavior doesn't apply here. UNVERIFIED beyond this session's
+ * own review: this relies on GPT-Live-1 actually speaking unprompted from
+ * an instruction alone, with no prior delegation — every other proactive
+ * announcement in this codebase (a finished background task) instead waits
+ * for the user to say anything at all, then leads with it (see
+ * liveDelegate.ts's handleDelegation). If this doesn't reliably speak on
+ * its own in practice, that's the fallback shape to copy.
+ */
+function announceInstructions(message: string): string {
+  return `${LIVE_INSTRUCTIONS}\n\nThis session was opened automatically to deliver ONE specific reminder, not because the user said anything. The instant the session connects, before waiting for the user to speak at all, say exactly: "${message}" — then go back to normal behavior (wait for them to talk, delegate anything they say).`;
+}
+
+/**
  * WebRTC signaling endpoint for GPT-Live-1: the browser posts its SDP offer
  * here, we exchange it for an answer with OpenAI (with the OPENAI_API_KEY
  * that never leaves the server), and attach a backend "sideband" connection
@@ -32,7 +48,7 @@ router.post("/session", attachUser, async (req, res) => {
   const start = Date.now();
   try {
     const userId = (req as any).userId;
-    const { sdp, timezone, voice } = req.body ?? {};
+    const { sdp, timezone, voice, announce } = req.body ?? {};
     if (typeof sdp !== "string" || !sdp.trim()) {
       return res.status(400).json({ error: "An SDP offer is required" });
     }
@@ -46,7 +62,7 @@ router.post("/session", attachUser, async (req, res) => {
     // was even sent, so the user-perceived "powering on" delay runs a bit
     // longer than this number.
     const { sessionId, answerSdp } = await createLiveSession(sdp, {
-      instructions: LIVE_INSTRUCTIONS,
+      instructions: typeof announce === "string" && announce ? announceInstructions(announce) : LIVE_INSTRUCTIONS,
       voice: typeof voice === "string" && voice ? voice : undefined,
     });
     console.log(`[live] session ${sessionId} created in ${Date.now() - start}ms`);
