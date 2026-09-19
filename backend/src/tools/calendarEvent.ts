@@ -1,5 +1,5 @@
 import { env } from "../config.js";
-import { executeComposioTool } from "../services/composio.js";
+import { executeComposioTool, getAccountsByToolkit } from "../services/composio.js";
 import { utcOffsetString } from "../util/time.js";
 
 /**
@@ -51,6 +51,25 @@ function diffMinutes(start: string, end: string): number {
 }
 
 export async function runAddCalendarEvent(input: any, ctx: { userId: string; timezone?: string }) {
+  // Same reasoning/fix as search_gmail's identical guard — Composio silently
+  // defaults to "the first connected account" when this is ambiguous, so
+  // without this, a second Calendar account never gets a real chance to be
+  // picked; Nova would just write to whichever one happened to be first.
+  if (!input.connectedAccountId) {
+    const accounts = (await getAccountsByToolkit(ctx.userId)).googlecalendar ?? [];
+    if (accounts.length > 1) {
+      return {
+        needsAccountSelection: true,
+        accounts: accounts.map((a) => ({ connectedAccountId: a.id, label: a.label })),
+        error: `This user has ${accounts.length} connected Google Calendar accounts: ${accounts
+          .map((a) => a.label)
+          .join(
+            ", "
+          )}. Do NOT guess which one — ask the user which account they mean, then call add_calendar_event again with that account's connectedAccountId once they say.`,
+      };
+    }
+  }
+
   const tz = ctx.timezone || env.TIMEZONE;
   const date = String(input.date);
   const summary = String(input.summary);

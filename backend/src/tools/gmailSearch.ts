@@ -1,5 +1,5 @@
 import { env } from "../config.js";
-import { executeComposioTool } from "../services/composio.js";
+import { executeComposioTool, getAccountsByToolkit } from "../services/composio.js";
 import { localMidnightEpochSeconds } from "../util/time.js";
 
 /**
@@ -102,6 +102,31 @@ export const gmailSearchTool = {
 };
 
 export async function runGmailSearch(input: any, ctx: { userId: string; timezone?: string }) {
+  // CONFIRMED BY TESTING: with 2+ Gmail accounts connected and no
+  // connectedAccountId given, Composio doesn't error — it silently searches
+  // "the first connected account" (its own SDK logs exactly that) and Nova
+  // just answered from whichever one happened to be first, never asking.
+  // The system prompt's own "ask which account" instruction (see llm.ts's
+  // buildSystem) is real but unenforced — nothing stops Claude from calling
+  // the tool without following it, which is exactly this project's whole
+  // pattern of NOT trusting prompt-following alone for anything that
+  // actually matters. Enforced here instead: refuse to guess, and make
+  // Claude ask, whenever it's genuinely ambiguous.
+  if (!input.connectedAccountId) {
+    const accounts = (await getAccountsByToolkit(ctx.userId)).gmail ?? [];
+    if (accounts.length > 1) {
+      return {
+        needsAccountSelection: true,
+        accounts: accounts.map((a) => ({ connectedAccountId: a.id, label: a.label })),
+        error: `This user has ${accounts.length} connected Gmail accounts: ${accounts
+          .map((a) => a.label)
+          .join(
+            ", "
+          )}. Do NOT guess which one — ask the user which account they mean, then call search_gmail again with that account's connectedAccountId once they say.`,
+      };
+    }
+  }
+
   const tz = ctx.timezone || env.TIMEZONE;
   const now = new Date();
 
