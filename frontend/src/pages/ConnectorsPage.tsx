@@ -8,9 +8,9 @@ export function ConnectorsPage() {
         <div className="max-w-lg text-center">
           <h1 className="text-3xl font-bold text-white">Connectors</h1>
           <p className="mt-2 text-sm text-white/50">
-            Connect the accounts Nova can act on by voice. Weather, sports, news, and the "call a restaurant" demo
-            don't need anything connected here — those run through Nova's own built-in web search (and a
-            simulated call, for the restaurant one).
+            Connect the accounts Nova can act on by voice. Weather, sports, news, and placing real phone calls (like
+            booking a table) don't need anything connected here — those run through Nova's own built-in web search
+            and her own phone number.
           </p>
         </div>
         <IntegrationsPanel />

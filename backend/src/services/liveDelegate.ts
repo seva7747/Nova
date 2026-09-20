@@ -28,7 +28,7 @@ const MAX_BACKGROUND_STEPS = 12; // outer cap on top of runConversationTurn's ow
  * key and Composio/Anthropic calls never touch the browser — reconstructs
  * what the user said from the transcript deltas GPT-Live streamed alongside
  * the delegation, runs it through Nova's EXISTING brain (runConversationTurn:
- * Claude + web search + the restaurant tool + Composio's Gmail/Calendar
+ * Claude + web search + make_phone_call + Composio's Gmail/Calendar
  * tools, unchanged from the classic pipeline), and speaks the result back by
  * appending it as "commentary" on that delegation.
  *

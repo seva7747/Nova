@@ -1,4 +1,4 @@
-import { callRestaurant, restaurantTool } from "./restaurant.js";
+import { makePhoneCallTool, runMakePhoneCall } from "./phoneCall.js";
 import { gmailSearchTool, runGmailSearch } from "./gmailSearch.js";
 import { addCalendarEventTool, runAddCalendarEvent } from "./calendarEvent.js";
 import { executeComposioTool } from "../services/composio.js";
@@ -31,11 +31,11 @@ const webSearchTool = {
 // search_gmail replaces direct access to Composio's GMAIL_FETCH_EMAILS
 // entirely (see gmailSearch.ts's comment for why) — it isn't a Composio
 // toolkit tool, so it's listed here as a static tool the same way
-// call_restaurant is, and composio.ts's CURATED_TOOLS.GMAIL no longer
+// make_phone_call is, and composio.ts's CURATED_TOOLS.GMAIL no longer
 // includes GMAIL_FETCH_EMAILS.
 export const staticTools = [
   webSearchTool,
-  restaurantTool,
+  makePhoneCallTool,
   gmailSearchTool,
   addCalendarEventTool,
   checkBackgroundTasksTool,
@@ -43,8 +43,14 @@ export const staticTools = [
   setReminderTool,
 ];
 
-/** Tool names/prefixes that represent a "real world" action worth talking over. */
-const SLOW_STATIC_TOOLS = new Set(["call_restaurant", "search_gmail", "add_calendar_event"]);
+/**
+ * Tool names/prefixes that represent a "real world" action worth talking
+ * over. make_phone_call is deliberately NOT here — placing the call itself
+ * resolves in well under a second (it's just an API call to Twilio, not the
+ * call itself), and the tool's own description already has Nova say "calling
+ * now" as her real answer, so a separate filler line would just be redundant.
+ */
+const SLOW_STATIC_TOOLS = new Set(["search_gmail", "add_calendar_event"]);
 const SLOW_TOOLKIT_PREFIXES = [
   "GMAIL",
   "GOOGLECALENDAR",
@@ -79,17 +85,13 @@ export function buildFillerText(block: { name: string; input: any }): string {
   if (upper.startsWith("WHATSAPP")) return "One moment, let me check WhatsApp...";
   if (upper.startsWith("SPOTIFY")) return "One second, let me get that going on Spotify...";
   if (upper.startsWith("CANVAS")) return "One second, let me check Canvas...";
-  if (upper === "CALL_RESTAURANT") {
-    const name = block.input?.restaurantName;
-    return name ? `Give me a minute, let me call up ${name} for you...` : "Give me a minute, let me make that call...";
-  }
   return "Give me a moment, I'm on it...";
 }
 
 export async function executeTool(name: string, input: any, ctx: { userId: string; timezone?: string }) {
   switch (name) {
-    case "call_restaurant":
-      return callRestaurant(input);
+    case "make_phone_call":
+      return runMakePhoneCall(input, ctx);
     case "search_gmail":
       return runGmailSearch(input, ctx);
     case "add_calendar_event":

@@ -11,6 +11,7 @@ import remindersRouter from "./routes/reminders.js";
 import smsRouter from "./routes/sms.js";
 import voiceCallRouter from "./routes/voiceCall.js";
 import { attachVoiceCallDelegate } from "./services/voiceCallDelegate.js";
+import { attachOutboundCallDelegate } from "./services/outboundCallDelegate.js";
 
 const app = express();
 
@@ -49,7 +50,24 @@ app.use("/api/voice-call", voiceCallRouter);
 // flow, and services/voiceCallDelegate.ts for what actually happens once
 // connected).
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: "/api/voice-call/stream" });
+
+// CONFIRMED BY TESTING — real call failure: Twilio error 64102, "Unable to
+// Connect to Websocket URL," but ONLY for the outbound-stream path; the
+// inbound /stream path (below) worked fine through the exact same tunnel.
+// Root cause: binding two separate `WebSocketServer`s directly to the same
+// `server` (each with its own `path` option) makes EACH one attach its own
+// 'upgrade' listener — and Node fires every listener for every upgrade
+// event. Whichever WebSocketServer was constructed FIRST sees the OTHER
+// server's path, decides it doesn't match, and aborts/destroys the socket
+// (ws's shouldHandle() → abortHandshake) before the second server's own
+// listener ever gets a chance to look at it. So the first path registered
+// silently ate every connection meant for the second one. Fixed with ws's
+// own documented pattern for multiple paths on one server: both in
+// `noServer` mode, with a single manual 'upgrade' handler that inspects the
+// pathname itself and routes to the right one.
+const wss = new WebSocketServer({ noServer: true });
+const outboundWss = new WebSocketServer({ noServer: true });
+
 wss.on("connection", (ws, req) => {
   // Lightweight access control in place of a real signature on the WS
   // upgrade (Twilio doesn't document one for ConversationRelay) — see
@@ -61,6 +79,28 @@ wss.on("connection", (ws, req) => {
     return;
   }
   attachVoiceCallDelegate(ws);
+});
+
+outboundWss.on("connection", (ws, req) => {
+  const url = new URL(req.url ?? "", "http://internal");
+  if (url.searchParams.get("auth") !== env.TWILIO_AUTH_TOKEN || !env.TWILIO_AUTH_TOKEN) {
+    console.warn("[outbound-call] rejected a WebSocket connection with a missing/invalid auth token");
+    ws.close();
+    return;
+  }
+  const callId = url.searchParams.get("callId") ?? "";
+  attachOutboundCallDelegate(ws, callId);
+});
+
+server.on("upgrade", (req, socket, head) => {
+  const { pathname } = new URL(req.url ?? "", "http://internal");
+  if (pathname === "/api/voice-call/stream") {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+  } else if (pathname === "/api/voice-call/outbound-stream") {
+    outboundWss.handleUpgrade(req, socket, head, (ws) => outboundWss.emit("connection", ws, req));
+  } else {
+    socket.destroy();
+  }
 });
 
 server.listen(env.PORT, () => {
