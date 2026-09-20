@@ -68,4 +68,10 @@ export const env = {
   // reconstruct the webhook URL for signature verification, since trusting
   // req headers for that would let a reverse proxy or forged header spoof it.
   PUBLIC_BASE_URL,
+
+  // The ESP32 Nova device (~/mic_esp/NovaLive) sends this as its Bearer
+  // token and acts as NOVA_DEVICE_USER_ID, so it sees that user's Composio
+  // connections. Unset = no device token is accepted.
+  NOVA_DEVICE_TOKEN: optional("NOVA_DEVICE_TOKEN"),
+  NOVA_DEVICE_USER_ID: optional("NOVA_DEVICE_USER_ID", "demo-user"),
 };

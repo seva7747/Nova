@@ -1,4 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
+import { timingSafeEqual } from "node:crypto";
+import { env } from "../config.js";
 import { normalizePhoneNumber, requestCode, verifyCode, getUserIdForSession, logout } from "../services/auth.js";
 
 const router = Router();
@@ -31,9 +33,15 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 export function attachUser(req: Request, _res: Response, next: NextFunction) {
   const header = req.headers.authorization ?? "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-  const userId = token ? getUserIdForSession(token) : null;
+  const userId = token ? getUserIdForSession(token) ?? deviceUserId(token) : null;
   (req as any).userId = userId ?? "demo-user";
   next();
+}
+
+function deviceUserId(token: string): string | null {
+  const expected = env.NOVA_DEVICE_TOKEN;
+  if (!expected || token.length !== expected.length) return null;
+  return timingSafeEqual(Buffer.from(token), Buffer.from(expected)) ? env.NOVA_DEVICE_USER_ID : null;
 }
 
 /** Step 1 of login: text a 6-digit code to the given phone number. */

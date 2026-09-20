@@ -53,6 +53,30 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
   };
   let closed = false;
 
+  // GPT-Live sometimes says "Got it, I'll check that" and never fires
+  // session.delegation.created, so the request never reaches Claude and the
+  // user gets silence. If their words are still undelegated a few seconds
+  // after they stopped talking AND GPT-Live has said something that promises
+  // action, run them through Claude anyway and speak the answer as commentary
+  // with a null delegation id (the docs allow null). Room chatter that
+  // GPT-Live correctly ignored never triggers this: it said nothing.
+  const DROPPED_HANDOFF_MS = 5000;
+  const PROMISES_ACTION = /\b(check|checking|pull|pulling|look|looking|get|getting|find|finding|search|searching|on it|one (sec|moment)|let me|working on)\b/i;
+  let spokenSinceInput = "";
+  let droppedHandoffTimer: ReturnType<typeof setTimeout> | undefined;
+  let dropNextDelegationForTest = Boolean(process.env.LIVE_TEST_DROP_DELEGATION);
+  const armDroppedHandoffWatchdog = () => {
+    clearTimeout(droppedHandoffTimer);
+    droppedHandoffTimer = setTimeout(() => {
+      const text = pendingUserText.trim();
+      if (!text || !PROMISES_ACTION.test(spokenSinceInput)) return;
+      console.log(`[live] session ${sessionId} handoff dropped — GPT-Live said "${spokenSinceInput.trim()}" but never delegated; running "${text}" anyway`);
+      pendingUserText = "";
+      queue.push({ delegationId: null, text });
+      void drainQueue();
+    }, DROPPED_HANDOFF_MS);
+  };
+
   const genId = () => Math.random().toString(36).slice(2, 10);
 
   const send = (obj: Record<string, unknown>) => {
@@ -68,7 +92,7 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
    * delegation's first response, once a background task tied to it finally
    * finishes, as long as the session (and this socket) is still open.
    */
-  const say = (delegationId: string, content: string) => {
+  const say = (delegationId: string | null, content: string) => {
     send({ type: "session.commentary.append", event_id: `c_${genId()}`, delegation_id: delegationId, content });
   };
 
@@ -79,7 +103,7 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
   // Background tasks don't use this queue — each one runs on its own forked
   // copy of the history (see runBackgroundTask), so they never block a new
   // question and never touch `messages`.
-  type QueueItem = { delegationId: string; text: string };
+  type QueueItem = { delegationId: string | null; text: string };
   const queue: QueueItem[] = [];
   let draining = false;
 
@@ -100,9 +124,10 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
     return userText;
   }
 
-  async function handleDelegation(delegationId: string, userText: string) {
+  async function handleDelegation(delegationId: string | null, userText: string) {
+    const tag = delegationId ?? "recovered";
     const turnStart = Date.now();
-    console.log(`[live] delegation ${delegationId} → "${userText}"`);
+    console.log(`[live] delegation ${tag} → "${userText}"`);
     // Snapshotted so a failed turn can be rolled back below — runConversationTurn
     // mutates `messages` in place as it goes (assistant turn, tool results, ...),
     // so by the time it throws, the bad content is already sitting in the array
@@ -117,7 +142,7 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
     if (finished.length > 0) {
       const summary = finished.map((t) => `"${t.description}" → ${t.result}`).join(" / ");
       content += `\n\n[System note, not said by the user: a background task you were running has finished since their last question: ${summary}. Answer their question above first, then add one short "by the way" sentence telling them it's done and the key outcome.]`;
-      console.log(`[live] delegation ${delegationId} will mention ${finished.length} finished task(s) as a by-the-way`);
+      console.log(`[live] delegation ${tag} will mention ${finished.length} finished task(s) as a by-the-way`);
     }
     messages.push({ role: "user", content });
 
@@ -142,7 +167,7 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
 
       messages = updated;
       say(delegationId, finalText);
-      console.log(`[live] delegation ${delegationId} answered in ${Date.now() - turnStart}ms → "${finalText}"`);
+      console.log(`[live] delegation ${tag} answered in ${Date.now() - turnStart}ms → "${finalText}"`);
       // Read before the handoff rewrite below changes the paused results.
       const turnActions = actionsSince(messages, beforeTurn);
 
@@ -174,7 +199,7 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
         void runBackgroundTask(task, structuredClone(messages), "verify");
       }
     } catch (err: any) {
-      console.error(`[live] delegation ${delegationId} failed:`, err?.message ?? err);
+      console.error(`[live] delegation ${tag} failed:`, err?.message ?? err);
       // CONFIRMED BY TESTING: without this, one failed turn (e.g. a tool
       // result that blew the context window) left its bad content sitting in
       // `messages` — every LATER turn in the same session then resent that
@@ -308,7 +333,7 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
       return;
     }
 
-    if (process.env.LIVE_DEBUG && !String(event.type).endsWith(".delta")) {
+    if (process.env.LIVE_DEBUG && !/\.delta$|input_audio\.append|usage\.updated/.test(String(event.type))) {
       console.log(`[live-debug] ${JSON.stringify(event).slice(0, 400)}`);
     }
     switch (event.type) {
@@ -322,6 +347,8 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
       case "session.input_transcript.delta":
         flushSpoken();
         pendingUserText += event.delta ?? "";
+        spokenSinceInput = "";
+        armDroppedHandoffWatchdog();
         break;
 
       // What Nova actually says out loud, logged so double acknowledgments
@@ -329,10 +356,18 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
       // of only being audible in the browser.
       case "session.output_transcript.delta":
         spokenText += event.delta ?? "";
+        spokenSinceInput += event.delta ?? "";
         break;
 
       case "session.delegation.created": {
         flushSpoken();
+        if (dropNextDelegationForTest) {
+          dropNextDelegationForTest = false;
+          console.log("[live] TEST: ignoring this delegation to simulate a dropped handoff");
+          break;
+        }
+        clearTimeout(droppedHandoffTimer);
+        spokenSinceInput = "";
         const delegationId = event.delegation?.id;
         const userText = pendingUserText.trim();
         pendingUserText = "";
@@ -349,7 +384,11 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
       }
 
       case "session.closed":
+        clearTimeout(droppedHandoffTimer);
         flushSpoken();
+        if (pendingUserText.trim()) {
+          console.log(`[live] session ${sessionId} heard but never delegated → "${pendingUserText.trim()}"`);
+        }
         console.log(`[live] session ${sessionId} closed — usage:`, event.usage ?? "(none reported)");
         closed = true;
         ws.close();

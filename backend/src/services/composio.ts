@@ -83,7 +83,20 @@ const CURATED_TOOLS: Record<string, string[]> = {
   ],
   GOOGLEDRIVE: ["GOOGLEDRIVE_FIND_FILE", "GOOGLEDRIVE_PARSE_FILE", "GOOGLEDRIVE_CREATE_FILE_FROM_TEXT"],
   SLACK: ["SLACK_CHAT_POST_MESSAGE", "SLACK_FETCH_CONVERSATION_HISTORY", "SLACK_LIST_ALL_CHANNELS"],
-  NOTION: ["NOTION_SEARCH_NOTION_PAGE", "NOTION_CREATE_NOTION_PAGE", "NOTION_ADD_PAGE_CONTENT"],
+  // UPDATE_PAGE changes a to-do's Status (or any property). FETCH_DATA finds the
+  // user's databases, FETCH_DATABASE gives a database's property names/options,
+  // QUERY_DATABASE lists its rows, and ARCHIVE moves a page to Notion's trash
+  // (recoverable) — together those cover "delete my finished tasks".
+  NOTION: [
+    "NOTION_SEARCH_NOTION_PAGE",
+    "NOTION_CREATE_NOTION_PAGE",
+    "NOTION_ADD_PAGE_CONTENT",
+    "NOTION_UPDATE_PAGE",
+    "NOTION_FETCH_DATA",
+    "NOTION_FETCH_DATABASE",
+    "NOTION_QUERY_DATABASE",
+    "NOTION_ARCHIVE_NOTION_PAGE",
+  ],
   TODOIST: ["TODOIST_CREATE_TASK", "TODOIST_GET_ALL_TASKS", "TODOIST_CLOSE_TASK", "TODOIST_GET_ALL_PROJECTS"],
   // WhatsApp's Business API (what Composio's toolkit wraps) can only SEND —
   // Meta doesn't expose a personal-inbox read API to third parties, so
@@ -530,8 +543,16 @@ export async function listConnections(userId: string): Promise<any[]> {
   const client = await getClient();
   if (!client) return [];
   try {
-    const result = await client.connectedAccounts.list({ userId });
-    return result?.items ?? (Array.isArray(result) ? result : []);
+    // `userIds` is the SDK's filter; a bare `userId` is silently dropped, which lists every user's accounts, 10 per page.
+    const items: any[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const result: any = await client.connectedAccounts.list({ userIds: [userId], limit: 100, ...(cursor ? { cursor } : {}) });
+      items.push(...(result?.items ?? (Array.isArray(result) ? result : [])));
+      cursor = result?.nextCursor ?? undefined;
+      if (!cursor) break;
+    }
+    return items;
   } catch (err: any) {
     console.error("[composio] failed to list connected accounts:", err?.error?.message ?? err?.message ?? err);
     return [];

@@ -131,9 +131,14 @@ nova/
               transport, hooks/useNovaConversation.ts is the state machine around it)
 ```
 
-## What's next (hardware phase)
+## Hardware: Nova on an ESP32-S3
 
-Once the software feels right: swap the browser wake-word listener for an on-device model (Picovoice Porcupine,
-already wired up here, or similar) running on the target hardware (e.g. a Raspberry Pi class board with a
-far-field mic) — the rest of this pipeline (GPT-Live-1 ↔ Claude ↔ tools) carries over largely unchanged, just
-driven from firmware/an on-device app instead of a browser tab.
+`~/mic_esp/NovaLive` is firmware that does the browser's job on an ESP32-S3 with an INMP441 mic and a MAX98357A
+speaker. It listens for "Hey Nova" on-chip, opens the same GPT-Live-1 WebRTC session through the same
+`POST /api/live/session`, and follows the same hang-up timers as `useNovaConversation.ts`. Nothing about the brain
+moves: Claude, web search and Composio keep running here, attached by `liveDelegate.ts` exactly as for the browser.
+
+The only backend addition is device auth. Set `NOVA_DEVICE_TOKEN` (and optionally `NOVA_DEVICE_USER_ID`, default
+`demo-user`) in `backend/.env`. The device sends that token and acts as that user, so it sees that user's
+connectors. On startup the backend prints the LAN address to put in the device's `config.h`. Setup is in
+`~/mic_esp/NovaLive/README.md`.

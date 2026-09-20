@@ -1,4 +1,5 @@
 import express from "express";
+import { networkInterfaces } from "node:os";
 import cors from "cors";
 import { env } from "./config.js";
 import authRouter from "./routes/auth.js";
@@ -34,5 +35,11 @@ app.use("/api/tasks", tasksRouter);
 app.use("/api/sms", smsRouter);
 
 app.listen(env.PORT, () => {
-  console.log(`\n  Nova backend ready → http://localhost:${env.PORT}\n`);
+  console.log(`\n  Nova backend ready → http://localhost:${env.PORT}`);
+  const lan = Object.values(networkInterfaces())
+    .flat()
+    .filter((a) => a && a.family === "IPv4" && !a.internal)
+    .map((a) => `http://${a!.address}:${env.PORT}`);
+  if (lan.length) console.log(`  On your network (for the ESP32 device) → ${lan.join(", ")}`);
+  console.log("");
 });
