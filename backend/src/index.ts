@@ -13,6 +13,15 @@ import voiceCallRouter from "./routes/voiceCall.js";
 import { attachVoiceCallDelegate } from "./services/voiceCallDelegate.js";
 import { attachOutboundCallDelegate } from "./services/outboundCallDelegate.js";
 
+// Temporary diagnostic — tracking down a real, reproducible freeze on the
+// brain-gpt-4.1-mini branch where the WHOLE process (including this simple
+// timer, if it stops logging) becomes unresponsive to even a plain health
+// check right after the first live delegation. If this keeps ticking while
+// requests hang, the event loop itself is fine and the bug is a stuck
+// promise somewhere; if this STOPS ticking, something is blocking the event
+// loop synchronously. Remove once found.
+setInterval(() => console.log(`[heartbeat] ${new Date().toISOString()}`), 3000);
+
 const app = express();
 
 app.use(cors({ origin: env.CORS_ORIGIN }));

@@ -346,7 +346,9 @@ export async function runConversationTurn({ messages, tools, userId, timezone, a
   const instructions = buildSystem(userId, timezone, accountsByToolkit);
   const apiTools = tools.map(toResponsesTool);
 
+  console.log(`[llm] calling OpenAI Responses API (${apiTools.length} tools, ${messages.length} history items)...`);
   let response = await callModel(messages, instructions, apiTools);
+  console.log(`[llm] got response, output types: ${(response.output ?? []).map((o: any) => o.type).join(", ")}`);
 
   let fillerFired = false;
   let guard = 0;

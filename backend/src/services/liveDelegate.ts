@@ -123,11 +123,13 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
     messages.push({ role: "user", content });
 
     try {
+      console.log(`[live] delegation ${delegationId} checkpoint: fetching tools...`);
       const [composioTools, accountsByToolkit] = await Promise.all([
         getComposioTools(ctx.userId),
         getAccountsByToolkit(ctx.userId),
       ]);
       const tools = [...staticTools, ...composioTools];
+      console.log(`[live] delegation ${delegationId} checkpoint: got ${tools.length} tools, calling runConversationTurn...`);
 
       const { finalText, messages: updated, needsMoreWork } = await runConversationTurn({
         messages,
@@ -140,6 +142,7 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
         // LIVE_INSTRUCTIONS in routes/live.ts); a second one sounds broken.
         onSlowTool: async () => {},
       });
+      console.log(`[live] delegation ${delegationId} checkpoint: runConversationTurn returned`);
 
       messages = updated;
       say(delegationId, finalText);
