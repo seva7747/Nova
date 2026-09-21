@@ -215,23 +215,40 @@ export function finishOutboundCall(id: string, outcome: string, status: "complet
  * reimplement here — either finish_call gets called, or the human keeps
  * talking and we keep replying.
  */
+// Same reasoning as llm.ts's identical constant — plain `fetch` has no
+// default timeout, and a stalled request here would leave a real, live
+// phone call sitting in dead silence indefinitely instead of failing
+// audibly. Bounded so it surfaces as a normal error the caller can react to.
+const REQUEST_TIMEOUT_MS = 25_000;
+
 export async function runOutboundTurn(call: OutboundCall, humanText: string): Promise<{ reply: string; done: boolean }> {
   call.messages.push({ role: "user", content: humanText });
   const instructions = buildOutboundSystem(call);
 
-  const resp = await fetch(`${OPENAI_API_BASE}/responses`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: env.OPENAI_REASONING_MODEL,
-      instructions,
-      input: call.messages,
-      tools: [finishCallTool],
-      tool_choice: "auto",
-      max_output_tokens: 300,
-      store: false,
-    }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let resp: Response;
+  try {
+    resp = await fetch(`${OPENAI_API_BASE}/responses`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: env.OPENAI_REASONING_MODEL,
+        instructions,
+        input: call.messages,
+        tools: [finishCallTool],
+        tool_choice: "auto",
+        max_output_tokens: 300,
+        store: false,
+      }),
+    });
+  } catch (err: any) {
+    if (err?.name === "AbortError") throw new Error(`OpenAI Responses API request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
   const json: any = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(json?.error?.message ?? `OpenAI Responses API error (${resp.status})`);
 

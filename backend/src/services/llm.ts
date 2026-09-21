@@ -265,12 +265,34 @@ export function describeConversationError(err: any, fallback = "Sorry, something
   if (err?.status === 429 || /rate.?limit/i.test(message)) {
     return "I'm getting rate-limited right now — give it a few seconds and try again.";
   }
+  if (/timed out/i.test(message)) {
+    return "Sorry, that took too long and timed out — try asking again.";
+  }
   return fallback;
 }
 
+// CONFIRMED BY TESTING: a real live session logged a delegation that started
+// ("who is the current president of America") and then NEVER got an answer —
+// no error, no timeout, nothing, ever, for the rest of that session. Plain
+// `fetch` has no default timeout, unlike the Anthropic SDK this replaced
+// (which had its own built-in one) — a single stalled OpenAI request could
+// hang this call, and therefore the whole live session waiting on it,
+// forever. Since a live voice turn goes through this exact function, a hang
+// here manifests to the user as the UI stuck on "Powering on..." or
+// "Thinking..." with no way out short of reloading the page. Bounded here
+// instead: any request that hasn't resolved in 25s is aborted and surfaces
+// as a normal, catchable error, which describeConversationError below turns
+// into something Nova can actually say instead of silence.
+const REQUEST_TIMEOUT_MS = 25_000;
+
 async function callModel(input: any[], instructions: string, tools: any[]): Promise<any> {
-  const resp = await fetch(`${API_BASE}/responses`, {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let resp: Response;
+  try {
+    resp = await fetch(`${API_BASE}/responses`, {
     method: "POST",
+    signal: controller.signal,
     headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: env.OPENAI_REASONING_MODEL,
@@ -293,7 +315,15 @@ async function callModel(input: any[], instructions: string, tools: any[]): Prom
       // the Groq/Gemini version before it both worked.
       store: false,
     }),
-  });
+    });
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      throw new Error(`OpenAI Responses API request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
   const json: any = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     const err: any = new Error(json?.error?.message ?? `OpenAI Responses API error (${resp.status})`);
