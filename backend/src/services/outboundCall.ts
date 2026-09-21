@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto";
-import Anthropic from "@anthropic-ai/sdk";
 import { env } from "../config.js";
 import { scheduleReminder } from "./reminders.js";
 
-const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+const OPENAI_API_BASE = "https://api.openai.com/v1";
 const TWILIO_API_BASE = "https://api.twilio.com/2010-04-01";
 
 /**
@@ -36,11 +35,16 @@ export type OutboundCall = {
 // tasks.ts) — resets on a backend restart, fine for a single-process app.
 const calls = new Map<string, OutboundCall>();
 
+// Flat Responses API function-tool shape (see llm.ts's toResponsesTool for
+// the fuller explanation of why this is flat, not nested under a
+// "function" key) — this call has exactly one tool, so it's just written
+// directly in the shape the API wants rather than going through a converter.
 const finishCallTool = {
+  type: "function" as const,
   name: "finish_call",
   description:
     "Call this the instant you have a real, final result for the objective — success, partial success, or a clear reason it can't be done — or if the call clearly isn't going anywhere (wrong number, no one available) and should end. Always include a short, natural spoken goodbye in your reply TEXT in this SAME response — the call hangs up right after, so this is the last chance to say anything.",
-  input_schema: {
+  parameters: {
     type: "object" as const,
     properties: {
       outcome: {
@@ -53,6 +57,15 @@ const finishCallTool = {
     required: ["outcome", "success"],
   },
 };
+
+function safeParseArgs(raw: string | undefined): any {
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
 
 function buildOutboundSystem(call: OutboundCall): string {
   return `You are Nova, an AI assistant placing a real phone call on behalf of ${call.callerName || "someone"}, to accomplish exactly this objective: "${call.objective}".
@@ -204,27 +217,39 @@ export function finishOutboundCall(id: string, outcome: string, status: "complet
  */
 export async function runOutboundTurn(call: OutboundCall, humanText: string): Promise<{ reply: string; done: boolean }> {
   call.messages.push({ role: "user", content: humanText });
-  const system = buildOutboundSystem(call);
+  const instructions = buildOutboundSystem(call);
 
-  const response = await anthropic.messages.create({
-    model: env.ANTHROPIC_MODEL,
-    max_tokens: 300,
-    system,
-    tools: [finishCallTool],
-    messages: call.messages,
+  const resp = await fetch(`${OPENAI_API_BASE}/responses`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: env.OPENAI_REASONING_MODEL,
+      instructions,
+      input: call.messages,
+      tools: [finishCallTool],
+      tool_choice: "auto",
+      max_output_tokens: 300,
+      store: false,
+    }),
   });
-  call.messages.push({ role: "assistant", content: response.content });
+  const json: any = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(json?.error?.message ?? `OpenAI Responses API error (${resp.status})`);
 
-  const content = response.content as any[];
-  const finishBlock = content.find((b) => b.type === "tool_use" && b.name === "finish_call");
-  const textReply = content
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
+  const output: any[] = json.output ?? [];
+  call.messages.push(...output.filter((o) => o.type === "function_call" || o.type === "message"));
+
+  const finishCall = output.find((o) => o.type === "function_call" && o.name === "finish_call");
+  const textReply = output
+    .filter((o) => o.type === "message")
+    .flatMap((o) => (Array.isArray(o.content) ? o.content : []))
+    .filter((c: any) => c.type === "output_text")
+    .map((c: any) => c.text)
     .join(" ")
     .trim();
 
-  if (finishBlock) {
-    const outcome = String(finishBlock.input?.outcome ?? "The call ended, but I don't have a clear result to report.");
+  if (finishCall) {
+    const args = safeParseArgs(finishCall.arguments);
+    const outcome = String(args?.outcome ?? "The call ended, but I don't have a clear result to report.");
     finishOutboundCall(call.id, outcome, "completed");
     return { reply: textReply || "Thanks so much, goodbye!", done: true };
   }

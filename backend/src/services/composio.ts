@@ -4,14 +4,14 @@ import { env } from "../config.js";
  * Composio integration.
  *
  * NOTE ON STABILITY: Composio's TypeScript SDK (v3 — `@composio/core` plus a
- * provider package like `@composio/anthropic`) is what most of this file
+ * provider package like `@composio/openai`) is what most of this file
  * targets, and the method names below (`tools.get`, `tools.execute`,
  * `connectedAccounts.list`) reflect their documented shape as of early 2026.
  * Composio evolves this SDK fairly often — if you see a "X is not a
  * function" error pointing at this file, check https://docs.composio.dev
- * (Providers → Anthropic, and the core SDK reference) for the current method
+ * (Providers → OpenAI, and the core SDK reference) for the current method
  * names and adjust the calls below. Everything else in Nova (weather, sports,
- * the restaurant demo) keeps working even if this integration breaks.
+ * outbound calling) keeps working even if this integration breaks.
  *
  * initiateConnection() below is the one exception — it was ported OFF the
  * SDK entirely (raw REST) after the pinned SDK version's equivalent method
@@ -29,10 +29,17 @@ async function getClient(): Promise<any | null> {
   if (!clientPromise) {
     clientPromise = (async () => {
       const { Composio } = await import("@composio/core");
-      const { AnthropicProvider } = await import("@composio/anthropic");
+      // OpenAIProvider, not AnthropicProvider — Nova's brain runs on OpenAI's
+      // Responses API now (gpt-4.1-mini, see llm.ts), and Composio shapes
+      // tool schemas differently per provider. This returns the
+      // Chat-Completions-style {type:"function", function:{name,description,
+      // parameters}} shape, which llm.ts's toResponsesTool() flattens into
+      // the Responses API's own {type:"function", name, description,
+      // parameters} shape (no nested "function" wrapper) before use.
+      const { OpenAIProvider } = await import("@composio/openai");
       return new Composio({
         apiKey: env.COMPOSIO_API_KEY,
-        provider: new AnthropicProvider(),
+        provider: new OpenAIProvider(),
       });
     })();
   }
@@ -270,7 +277,14 @@ async function resolveAccountLabel(connectedAccountId: string, toolkitSlug: stri
     const client = await getClient();
     if (!client) return fallback;
     const result: any = await client.tools.execute(toolName, { userId, arguments: {}, connectedAccountId });
-    const email = result?.data?.emailAddress ?? result?.data?.email ?? result?.emailAddress;
+    // CONFIRMED BY TESTING: Composio's actual response now nests the real
+    // payload one level deeper, under response_data (data.response_data.
+    // emailAddress) — data.emailAddress directly (this function's original
+    // shape) no longer matches anything, so this was silently falling back
+    // to "Account 1"/"Account 2" instead of a real email address. Checking
+    // both shapes so this survives if Composio moves it back.
+    const email =
+      result?.data?.response_data?.emailAddress ?? result?.data?.emailAddress ?? result?.data?.email ?? result?.emailAddress;
     if (typeof email === "string" && email) {
       labelCache.set(connectedAccountId, email);
       return email;

@@ -13,20 +13,20 @@ import { setReminderTool, runSetReminder } from "./reminder.js";
 import { env } from "../config.js";
 
 /**
- * Anthropic's built-in web search tool. Unlike the tools below, this one runs
- * entirely on Anthropic's servers — Claude decides to search, the API
- * fetches real results, and Claude answers with them, all inside a single
- * API call. We never see a "tool_use" block for it and never execute
- * anything ourselves; it just needs to be listed here. This is what answers
- * weather, sports scores/schedules, news, prices — anything that changes
- * over time and can't come from the model's training data alone.
- * Docs: https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
+ * OpenAI's built-in web search tool (Responses API). Unlike the tools below,
+ * this one runs entirely on OpenAI's servers — the model decides to search,
+ * the API fetches real results, and it answers with them, all inside a
+ * single API call. We never see a "function_call" item for it and never
+ * execute anything ourselves; it just needs to be listed in `tools`. This is
+ * what answers weather, sports scores/schedules, news, prices — anything
+ * that changes over time and can't come from the model's training data
+ * alone. CONFIRMED BY RESEARCH: only certain models support this in the
+ * Responses API — gpt-4o-mini's search-capable variant was deprecated and
+ * shut down 2026-07-23, which is exactly why Nova's brain is on gpt-4.1-mini
+ * (config.ts's OPENAI_REASONING_MODEL) and not the cheaper gpt-4o-mini.
+ * Docs: https://developers.openai.com/api/docs/guides/tools-web-search
  */
-const webSearchTool = {
-  type: "web_search_20250305",
-  name: "web_search",
-  max_uses: 3, // caps cost/latency per turn — most questions need 1 search
-};
+const webSearchTool = { type: "web_search" };
 
 // search_gmail replaces direct access to Composio's GMAIL_FETCH_EMAILS
 // entirely (see gmailSearch.ts's comment for why) — it isn't a Composio

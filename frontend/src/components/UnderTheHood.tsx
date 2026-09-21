@@ -2,22 +2,22 @@ const STACK = [
   {
     stage: "Wake word",
     choice: "Picovoice Porcupine (on-device), browser speech recognition as fallback",
-    why: "Always-on, free, and runs locally in the tab listening for “Nova” — no OpenAI/Anthropic call happens until it fires.",
+    why: "Always-on, free, and runs locally in the tab listening for “Nova” — no OpenAI call happens until it fires.",
   },
   {
     stage: "Listening & speaking",
     choice: "OpenAI · GPT-Live-1",
-    why: "One persistent, full-duplex WebRTC voice session — replaces separate transcription and text-to-speech calls with a single always-on connection. Only this part is OpenAI.",
+    why: "One persistent, full-duplex WebRTC voice session — replaces separate transcription and text-to-speech calls with a single always-on connection.",
   },
   {
     stage: "Thinking & tool routing",
-    choice: "Claude Haiku 4.5",
-    why: "GPT-Live-1 delegates every real request here — it never answers on its own. Fast, cheap, and reliable at deciding which tool to call (Gmail, Calendar, web search...).",
+    choice: "OpenAI · gpt-4.1-mini",
+    why: "GPT-Live-1 delegates every real request here — it never answers on its own. Cheap and reliable at deciding which tool to call (Gmail, Calendar, web search...) — swapped from Claude Haiku 4.5 for a real, meaningful cost cut with no loss of capability.",
   },
   {
     stage: "Live info",
-    choice: "Claude's built-in web search",
-    why: "Weather, sports scores, news — a real search Claude runs itself, not a guess from training data.",
+    choice: "OpenAI's built-in web search",
+    why: "Weather, sports scores, news — a real search the model runs itself, not a guess from training data.",
   },
   {
     stage: "Integrations",
