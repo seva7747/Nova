@@ -22,6 +22,29 @@ import { env } from "../config.js";
  * function to composioFetch() too rather than upgrading the whole SDK blind.
  */
 
+// CONFIRMED BY TESTING: a cold (uncached) Composio tools.get()/
+// listConnections() call, historically ~600-1000ms, took 45-90+ SECONDS —
+// with no code change on our end, meaning Composio's own API had gotten
+// genuinely slow/degraded for a live user. Neither call had a timeout, so
+// the FIRST delegation of every session (always a cold cache) just hung
+// until GPT-Live's own client gave up first (the "thinks for a bit, then
+// quits with no answer" symptom this was chasing). Bounded here so a slow
+// Composio day degrades Nova gracefully (static tools + web search still
+// answer fast) instead of hanging the whole turn.
+const COMPOSIO_TIMEOUT_MS = 8_000;
+
+async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${COMPOSIO_TIMEOUT_MS}ms`)), COMPOSIO_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 let clientPromise: Promise<any> | null = null;
 
 async function getClient(): Promise<any | null> {
@@ -169,12 +192,15 @@ export async function getComposioTools(userId: string): Promise<any[]> {
     // worked at all. Not a regression from curation work — it was silently
     // broken from the start. Both calls below pass an explicit limit for
     // exactly this reason.
-    const [curatedTools, dynamicTools] = await Promise.all([
-      curatedToolNames.length > 0 ? client.tools.get(userId, { tools: curatedToolNames, limit: 100 }) : [],
-      dynamicSlugs.length > 0
-        ? client.tools.get(userId, { toolkits: dynamicSlugs, limit: dynamicSlugs.length * DYNAMIC_TOOLS_PER_TOOLKIT })
-        : [],
-    ]);
+    const [curatedTools, dynamicTools] = await withTimeout(
+      Promise.all([
+        curatedToolNames.length > 0 ? client.tools.get(userId, { tools: curatedToolNames, limit: 100 }) : [],
+        dynamicSlugs.length > 0
+          ? client.tools.get(userId, { toolkits: dynamicSlugs, limit: dynamicSlugs.length * DYNAMIC_TOOLS_PER_TOOLKIT })
+          : [],
+      ]),
+      "Composio tools.get"
+    );
 
     const combined = [...(Array.isArray(curatedTools) ? curatedTools : []), ...(Array.isArray(dynamicTools) ? dynamicTools : [])];
     const list = await patchMultiAccountTools(combined, userId);
@@ -269,7 +295,7 @@ async function resolveAccountLabel(connectedAccountId: string, toolkitSlug: stri
   try {
     const client = await getClient();
     if (!client) return fallback;
-    const result: any = await client.tools.execute(toolName, { userId, arguments: {}, connectedAccountId });
+    const result: any = await withTimeout(client.tools.execute(toolName, { userId, arguments: {}, connectedAccountId }), `Composio ${toolName}`);
     const email = result?.data?.emailAddress ?? result?.data?.email ?? result?.emailAddress;
     if (typeof email === "string" && email) {
       labelCache.set(connectedAccountId, email);
@@ -303,7 +329,16 @@ export async function getAccountsByToolkit(userId: string, skipCache = false): P
   const cached = accountsCache.get(userId);
   if (!skipCache && cached && cached.expiresAt > Date.now()) return cached.data;
 
-  const all = await listConnections(userId);
+  let all: any[];
+  try {
+    all = await withTimeout(listConnections(userId), "Composio listConnections");
+  } catch (err: any) {
+    // A slow/degraded Composio should never hang the whole turn — fall back
+    // to "no connected accounts" for this one call rather than blocking
+    // indefinitely; the next call (cache expires in 60s) tries again fresh.
+    console.error("[composio] listConnections timed out or failed:", err?.message ?? err);
+    return {};
+  }
   const active = all.filter((c: any) => String(c.status ?? "").toUpperCase() === "ACTIVE");
 
   const grouped = new Map<string, any[]>();
