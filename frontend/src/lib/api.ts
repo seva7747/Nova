@@ -91,6 +91,15 @@ export async function fetchTaskStatus(): Promise<TaskStatus | null> {
   }
 }
 
+/** Marks a finished background task as announced backend-side — call this right after proactively speaking its result, so the older reactive "Done — " mention (see liveDelegate.ts) never repeats it. */
+export async function markTasksAnnounced(): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/api/tasks/mark-announced`, { method: "POST", headers: authHeaders() });
+  } catch {
+    // best-effort — worst case the same result gets mentioned once more reactively later
+  }
+}
+
 /** Polled while plugged in so a reminder set during a past session still gets spoken exactly when due — see backend/src/services/reminders.ts. Each due reminder is only ever returned once (the backend marks it delivered on the way out). */
 export async function fetchDueReminder(): Promise<{ message: string } | null> {
   try {

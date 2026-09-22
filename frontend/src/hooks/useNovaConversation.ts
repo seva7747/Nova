@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useWakeWordEngine } from "./useWakeWordEngine";
 import { useNovaSettings } from "./useNovaSettings";
 import { useNovaLive, type LiveConnection } from "./useNovaLive";
-import { fetchTaskStatus, fetchDueReminder } from "../lib/api";
+import { fetchTaskStatus, fetchDueReminder, markTasksAnnounced } from "../lib/api";
 
 // "live-idle" = a GPT-Live-1 voice session is open and Nova is just waiting
 // for you to talk (no wake word needed mid-session) — distinct from
@@ -56,39 +56,8 @@ export function useNovaConversation() {
     setLog((l) => [...l.slice(-40), { ...entry, id: makeId() }]);
   }, []);
 
-  // Polls a plain HTTP endpoint (free — no GPT-Live session needed) so a
-  // background task (see backend/src/services/liveDelegate.ts and tasks.ts)
-  // still shows up and gets announced in the transcript even if the paid
-  // voice session that started it has since closed by the time it finishes.
-  // Set up ONCE (not keyed on `state`, which changes far more often than
-  // every 2.5s) so the interval and the "was it active last time I checked"
-  // tracking both survive state changes cleanly instead of tearing down and
-  // losing track mid-task.
   const stateRef = useRef(state);
   stateRef.current = state;
-  useEffect(() => {
-    let wasDone = false;
-    const poll = async () => {
-      if (stateRef.current === "off") {
-        setTaskLight("none");
-        return;
-      }
-      const status = await fetchTaskStatus();
-      if (!status) return;
-      // Yellow while anything's running; green once it's finished but Nova
-      // hasn't mentioned it yet — it clears when the next question's "by
-      // the way" picks it up (backend takes it then).
-      setTaskLight(status.active ? "running" : status.done ? "done" : "none");
-      const isDone = Boolean(status.done);
-      if (isDone && !wasDone && status.result) {
-        pushLog({ role: "system", text: `✅ Finished in the background: ${status.result}` });
-      }
-      wasDone = isDone;
-    };
-    poll();
-    const interval = window.setInterval(poll, 2500);
-    return () => window.clearInterval(interval);
-  }, [pushLog]);
 
   const clearLiveIdleTimer = useCallback(() => {
     window.clearTimeout(liveIdleTimerRef.current);
@@ -189,24 +158,26 @@ export function useNovaConversation() {
           // growing this speech bubble" and shows "thinking" — only a bit
           // more continued silence after that is treated as actually done.
           //
-          // CONFIRMED BY TESTING (real feedback): this second stage used to
-          // be 20 seconds, meaning the true total time from Nova's last word
-          // to the session actually closing was ~1.8s + 20s + the 8s(min)
-          // idle timer below — nearly 30 seconds of billed GPT-Live time
-          // after she'd clearly finished, not the "~8 seconds" the idle
-          // timer's own number suggests. Cut way down: background tasks
-          // don't need the live session to stay open anyway (they keep
-          // running regardless — see liveDelegate.ts), so there's much less
-          // reason to wait this long before even STARTING the real
-          // idle-close countdown. Any further speech (or the user talking)
-          // still cancels this at either stage, same as before.
+          // CONFIRMED BY TESTING (real feedback, twice now): this second
+          // stage was found still set to 20 seconds despite an earlier fix
+          // attempt — meaning the true total time from Nova's last word to
+          // the session actually closing was ~1.8s + 20s + the 8s(min) idle
+          // timer below, nearly 30 seconds of billed GPT-Live time after
+          // she'd clearly finished, not the "~8 seconds" the idle timer's
+          // own number suggests, AND a wide-open window for ambient
+          // conversation not meant for Nova to get captured as a new turn.
+          // Cut to 3s: background tasks don't need the live session to stay
+          // open anyway (they keep running regardless — see liveDelegate.ts),
+          // so there's no reason to wait this long before even STARTING the
+          // real idle-close countdown. Any further speech (or the user
+          // talking) still cancels this at either stage, same as before.
           liveNovaSpeakingTimerRef.current = window.setTimeout(() => {
             liveNovaEntryIdRef.current = null;
             setState((s) => (s === "off" ? s : "thinking"));
             liveThinkingToIdleTimerRef.current = window.setTimeout(() => {
               setState((s) => (s === "off" ? s : "live-idle"));
               armLiveIdleTimer();
-            }, 20000);
+            }, 3000);
           }, 1800);
         },
         onClosed: () => {
@@ -250,6 +221,45 @@ export function useNovaConversation() {
     const interval = window.setInterval(poll, 2500);
     return () => window.clearInterval(interval);
   }, [beginCommand]);
+
+  // Drives the "working on something big" orb state AND, CONFIRMED BY
+  // TESTING (real feedback), now proactively SPEAKS a finished task's result
+  // the moment it's next safe to — this used to only ever get mentioned
+  // reactively (the next time the user said anything at all), so a task that
+  // finished while nobody was talking to Nova just sat there "done" forever,
+  // silently, unless someone happened to ask something else later. Same
+  // "only while merely idling, never interrupt an open session" gating as
+  // the reminder poll above, and the same zero-cost-while-waiting shape
+  // (plain HTTP poll; only opens a real GPT-Live session once there's
+  // actually something to say). markTasksAnnounced() tells the backend this
+  // was spoken, so the older reactive "Done — " mention never repeats it.
+  useEffect(() => {
+    let wasDone = false;
+    const poll = async () => {
+      if (stateRef.current === "off") {
+        setTaskLight("none");
+        return;
+      }
+      const status = await fetchTaskStatus();
+      if (!status) return;
+      // Yellow while anything's running; green once it's finished but Nova
+      // hasn't mentioned it yet — it clears once spoken (below) or once the
+      // next question's "by the way" picks it up (backend takes it then).
+      setTaskLight(status.active ? "running" : status.done ? "done" : "none");
+      const isDone = Boolean(status.done);
+      if (isDone && !wasDone && status.result) {
+        pushLog({ role: "system", text: `✅ Finished in the background: ${status.result}` });
+        if (stateRef.current === "wake-listening" && !busyRef.current) {
+          void markTasksAnnounced();
+          beginCommand(status.result);
+        }
+      }
+      wasDone = isDone;
+    };
+    poll();
+    const interval = window.setInterval(poll, 2500);
+    return () => window.clearInterval(interval);
+  }, [pushLog, beginCommand]);
 
   const {
     supported: wakeWordSupported,

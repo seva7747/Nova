@@ -19,7 +19,7 @@ import { utcOffsetString } from "../util/time.js";
 export const addCalendarEventTool = {
   name: "add_calendar_event",
   description:
-    "Add an event to Google Calendar. Always use this instead of GOOGLECALENDAR_CREATE_EVENT directly — it automatically skips creating a duplicate if an event with the same title already exists on that date, which matters for any bulk or repeated request (e.g. marking a list of holidays) that might get run more than once. Returns { created: true/false, skipped, reason }.",
+    "Add an event to Google Calendar. Always use this instead of GOOGLECALENDAR_CREATE_EVENT directly — it automatically skips creating a duplicate if an event with the same title already exists on that date, which matters for any bulk or repeated request (e.g. marking a list of holidays) that might get run more than once. It also checks for a scheduling CONFLICT — a different, already-existing timed event that overlaps the requested time — and refuses to create it (returning needsConfirmation) until the user has explicitly said to go ahead anyway; call this again with confirmed:true once they do. Returns { created: true/false, skipped, reason } or { needsConfirmation: true, conflictingEvent, error }.",
   input_schema: {
     type: "object" as const,
     properties: {
@@ -30,6 +30,11 @@ export const addCalendarEventTool = {
       durationMinutes: { type: "integer", description: "Alternative to endTime: length in minutes, any positive number (e.g. 180 for three hours, not just under 60). Only used if endTime is omitted. Default 30." },
       description: { type: "string", description: "Optional longer note for the event." },
       connectedAccountId: { type: "string", description: "Which connected Calendar account to use — only needed if the user has more than one connected." },
+      confirmed: {
+        type: "boolean",
+        description:
+          "Set to true ONLY after the user has explicitly said to go ahead despite a scheduling conflict a previous call to this tool told you about. Omit entirely on a normal, first attempt — never guess this to true.",
+      },
     },
     required: ["summary", "date"],
   },
@@ -48,6 +53,17 @@ function minutesSinceMidnight(hhmm: string): number {
 function diffMinutes(start: string, end: string): number {
   const diff = minutesSinceMidnight(end) - minutesSinceMidnight(start);
   return diff > 0 ? diff : diff + 24 * 60;
+}
+
+/** A timed (not all-day) existing event's [start, end) as epoch ms, or null if it's all-day (has .date, not .dateTime) or malformed — all-day markers are deliberately excluded from conflict checks below. */
+function parseEventRange(e: any): { start: number; end: number } | null {
+  const startStr = e?.start?.dateTime;
+  const endStr = e?.end?.dateTime;
+  if (!startStr || !endStr) return null;
+  const start = new Date(startStr).getTime();
+  const end = new Date(endStr).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end)) return null;
+  return { start, end };
 }
 
 export async function runAddCalendarEvent(input: any, ctx: { userId: string; timezone?: string }) {
@@ -97,6 +113,39 @@ export async function runAddCalendarEvent(input: any, ctx: { userId: string; tim
 
   if (duplicate) {
     return { created: false, skipped: true, reason: `"${summary}" is already on the calendar for ${date}.`, existingEventId: duplicate.id };
+  }
+
+  // CONFIRMED BY TESTING — a real wrong action: asked to add a recurring
+  // class at a specific time, Nova created it directly over a class that was
+  // ALREADY on the calendar (from an earlier Canvas import) at the exact
+  // same time — the duplicate check above only catches the SAME title, so a
+  // genuine double-booking under a different name sailed right through.
+  // Only checked for TIMED events (an all-day marker like a holiday isn't a
+  // real scheduling conflict in this sense), and skipped once the user has
+  // explicitly confirmed they want it anyway (confirmed:true).
+  if (input.startTime && !input.confirmed) {
+    const newStart = new Date(`${date}T${input.startTime}:00${offset}`).getTime();
+    const totalMinutes = input.endTime
+      ? diffMinutes(String(input.startTime), String(input.endTime))
+      : Math.max(Number(input.durationMinutes) || 30, 1);
+    const newEnd = newStart + totalMinutes * 60_000;
+
+    const conflict = existingItems.find((e) => {
+      const range = parseEventRange(e);
+      if (!range) return false;
+      return range.start < newEnd && newStart < range.end;
+    });
+
+    if (conflict) {
+      const fmt = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+      const conflictStart = fmt(conflict.start.dateTime);
+      const conflictEnd = fmt(conflict.end.dateTime);
+      return {
+        needsConfirmation: true,
+        conflictingEvent: { summary: conflict.summary, start: conflictStart, end: conflictEnd, date },
+        error: `There's already "${conflict.summary}" on the calendar from ${conflictStart} to ${conflictEnd} on ${date}, which overlaps the requested time for "${summary}". Do NOT create this yet — ask the user to confirm they really want to add it on top of the existing event, then call add_calendar_event again with confirmed:true only if they say yes.`,
+      };
+    }
   }
 
   const createArgs: Record<string, unknown> = {
