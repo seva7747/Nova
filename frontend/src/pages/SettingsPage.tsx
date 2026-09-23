@@ -143,7 +143,7 @@ export function SettingsPage() {
 
         <SectionCard
           title="Follow-up listening"
-          description="How long a live session stays open, listening with no wake word needed, after Nova finishes talking with nobody responding — before she hangs up (an 8-second minimum always applies, since a live session bills $0.05/minute open, separate from Claude/Composio usage)."
+          description="How long a live session stays open, listening with no wake word needed, after Nova finishes talking with nobody responding — before she hangs up (an 8-second minimum always applies, since a live session bills $0.05/minute open, separate from brain and Composio usage)."
         >
           <select
             value={settings.followUpMs}

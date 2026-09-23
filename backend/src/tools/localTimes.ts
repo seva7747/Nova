@@ -4,7 +4,7 @@
  * `due_at_local: "Thursday, Sep 17, 11:59 PM PDT (today)"`.
  *
  * CONFIRMED BY TESTING: Canvas returns every date (due_at, lock_at,
- * unlock_at, ...) as a raw UTC instant, and Claude read them as if they were
+ * unlock_at, ...) as a raw UTC instant, and the model read them as if they were
  * already local — an assignment due 11:59 PM tonight Pacific (06:59Z the next
  * morning) came out as "due at 6:59 AM tomorrow", and in another run "due
  * tonight at 6:59 AM, in about 11 hours". Same class of bug search_gmail

@@ -25,7 +25,7 @@ function escapeXml(s: string): string {
  * and the WS server wired up alongside this router in index.ts. Same
  * "someone else owns the audio, we only exchange text" shape as GPT-Live-1's
  * client delegation and the SMS pipeline, just a third transport for the
- * identical Claude+Composio brain underneath.
+ * identical brain+Composio stack underneath.
  *
  * SECURITY NOTE: this HTTP webhook is signature-verified the same way the
  * SMS one is. The WebSocket it hands off to is a different story — Twilio's

@@ -259,7 +259,7 @@ export function IntegrationsPanel() {
 
       <p className="mt-5 text-xs text-white/30 leading-relaxed">
         Weather, sports scores, and placing real phone calls (booking a table, asking a business a question) don't
-        need a connection — weather and sports run through Claude's own live web search, and calls go out through
+        need a connection — weather and sports run through the model's own live web search, and calls go out through
         Nova's own phone number.
       </p>
     </section>

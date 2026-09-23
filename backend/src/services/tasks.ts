@@ -104,23 +104,27 @@ export function restoreUnannounced(pending: Task[]) {
 
 /**
  * Human-readable list of the tool actions that actually ran in messages[from..]
- * (Anthropic message shape). Tool calls that came back as the synthetic
- * "Paused here" result (see llm.ts) didn't run and get retried next step, so
- * they're skipped rather than double-counted.
+ * (OpenAI Responses item shape — a flat array of items, not role/content
+ * blocks). Tool calls that came back as the synthetic "Paused here" output
+ * (see llm.ts) didn't run and get retried next step, so they're skipped
+ * rather than double-counted.
  */
 export function actionsSince(messages: any[], from: number): string[] {
   const calls = new Map<string, { name: string; input: any }>();
   const done: string[] = [];
-  for (const m of messages.slice(from)) {
-    if (!Array.isArray(m?.content)) continue;
-    for (const block of m.content) {
-      if (m.role === "assistant" && block?.type === "tool_use") {
-        calls.set(block.id, { name: block.name, input: block.input });
-      } else if (m.role === "user" && block?.type === "tool_result") {
-        if (JSON.stringify(block.content ?? "").includes("Paused here")) continue;
-        const call = calls.get(block.tool_use_id);
-        if (call) done.push(describeAction(call.name, call.input));
+  for (const item of messages.slice(from)) {
+    if (item?.type === "function_call") {
+      let input: any = {};
+      try {
+        input = typeof item.arguments === "string" ? JSON.parse(item.arguments || "{}") : item.arguments ?? {};
+      } catch {
+        input = {};
       }
+      calls.set(item.call_id, { name: item.name, input });
+    } else if (item?.type === "function_call_output") {
+      if (String(item.output ?? "").includes("Paused here")) continue;
+      const call = calls.get(item.call_id);
+      if (call) done.push(describeAction(call.name, call.input));
     }
   }
   return done;

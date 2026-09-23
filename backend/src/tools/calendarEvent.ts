@@ -7,7 +7,7 @@ import { utcOffsetString } from "../util/time.js";
  * replacing direct access to it — same philosophy as search_gmail.
  *
  * CONFIRMED BY TESTING: asked to mark a list of holidays on the calendar a
- * second time (one had already been added), Claude re-created the
+ * second time (one had already been added), the model re-created the
  * already-existing one — nothing in the raw create-event tool checks for a
  * duplicate, and there's no reliable reason to expect an LLM to remember to
  * check first, every time, especially mid-way through a long batch of
@@ -17,10 +17,11 @@ import { utcOffsetString } from "../util/time.js";
  * before creating anything, and reports whether it actually created one.
  */
 export const addCalendarEventTool = {
+  type: "function" as const,
   name: "add_calendar_event",
   description:
     "Add an event to Google Calendar. Always use this instead of GOOGLECALENDAR_CREATE_EVENT directly — it automatically skips creating a duplicate if an event with the same title already exists on that date, which matters for any bulk or repeated request (e.g. marking a list of holidays) that might get run more than once. It also checks for a scheduling CONFLICT — a different, already-existing timed event that overlaps the requested time — and refuses to create it (returning needsConfirmation) until the user has explicitly said to go ahead anyway; call this again with confirmed:true once they do. Returns { created: true/false, skipped, reason } or { needsConfirmation: true, conflictingEvent, error }.",
-  input_schema: {
+  parameters: {
     type: "object" as const,
     properties: {
       summary: { type: "string", description: "Event title, e.g. \"Labor Day (court closed)\"." },

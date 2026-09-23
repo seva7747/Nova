@@ -151,7 +151,7 @@ async function drainQueue(phoneNumber: string, session: Session) {
 /**
  * Entry point for an inbound SMS (see routes/sms.ts). Fire-and-forget by
  * design — the webhook route replies to Twilio immediately with empty TwiML
- * so a slow Claude/Composio turn never risks Twilio's ~15s webhook timeout;
+ * so a slow brain/Composio turn never risks Twilio's ~15s webhook timeout;
  * the real answer goes out later via sendSms once this is done.
  */
 export function handleIncomingSms(phoneNumber: string, text: string) {

@@ -5,7 +5,7 @@ import { authHeaders } from "../lib/auth";
 type LiveCallbacks = {
   /** Fires on every recognized chunk of what the USER is saying, as GPT-Live hears it. */
   onUserTranscript?: (delta: string) => void;
-  /** GPT-Live has handed this turn to Nova's real backend (Claude + tools) — nothing to show yet, just "thinking". */
+  /** GPT-Live has handed this turn to Nova's real backend (the brain + tools) — nothing to show yet, just "thinking". */
   onDelegating?: () => void;
   /** Fires on every chunk of what NOVA is saying, as she says it. */
   onNovaTranscript?: (delta: string) => void;
@@ -20,7 +20,7 @@ export type LiveConnection = { close: () => void };
  * Thin WebRTC transport for GPT-Live-1: opens a peer connection (mic out,
  * speaker in), does the SDP exchange through our backend (which holds the
  * OpenAI key), and turns the data-channel event stream into a few simple
- * callbacks. All the actual conversation logic (Claude, Composio, deciding
+ * callbacks. All the actual conversation logic (the brain, Composio, deciding
  * what to say) happens server-side in liveDelegate.ts — this hook never sees
  * any of that, it just carries audio and tells the UI what's happening.
  *

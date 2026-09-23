@@ -46,7 +46,7 @@ function announceInstructions(message: string): string {
  * WebRTC signaling endpoint for GPT-Live-1: the browser posts its SDP offer
  * here, we exchange it for an answer with OpenAI (with the OPENAI_API_KEY
  * that never leaves the server), and attach a backend "sideband" connection
- * to the new session so Claude + Composio can drive it (see liveDelegate.ts).
+ * to the new session so the brain + Composio can drive it (see liveDelegate.ts).
  */
 router.post("/session", attachUser, async (req, res) => {
   const start = Date.now();

@@ -13,19 +13,24 @@ import { setReminderTool, runSetReminder } from "./reminder.js";
 import { env } from "../config.js";
 
 /**
- * Anthropic's built-in web search tool. Unlike the tools below, this one runs
- * entirely on Anthropic's servers — Claude decides to search, the API
- * fetches real results, and Claude answers with them, all inside a single
- * API call. We never see a "tool_use" block for it and never execute
- * anything ourselves; it just needs to be listed here. This is what answers
- * weather, sports scores/schedules, news, prices — anything that changes
- * over time and can't come from the model's training data alone.
- * Docs: https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
+ * OpenAI's hosted web search tool. Unlike the tools below, this one runs
+ * entirely on OpenAI's servers — the model decides to search, the API
+ * fetches real results, and the model answers with them, all inside a single
+ * API call. We never see a function_call for it and never execute anything
+ * ourselves; it just needs to be listed here. This is what answers weather,
+ * sports scores/schedules, news, prices — anything that changes over time
+ * and can't come from the model's training data alone.
+ *
+ * This is the reason llm.ts uses the Responses API rather than Chat
+ * Completions: hosted web search only exists on Responses.
+ *
+ * NOTE: the Anthropic tool this replaced took a `max_uses: 3` cap, which
+ * bounded cost and latency per turn. Responses has no equivalent knob, so
+ * the only remaining bound on searches per turn is llm.ts's MAX_TOOL_ROUNDS.
+ * Docs: https://platform.openai.com/docs/guides/tools-web-search
  */
 const webSearchTool = {
-  type: "web_search_20250305",
-  name: "web_search",
-  max_uses: 3, // caps cost/latency per turn — most questions need 1 search
+  type: "web_search",
 };
 
 // search_gmail replaces direct access to Composio's GMAIL_FETCH_EMAILS
@@ -105,7 +110,7 @@ export async function executeTool(name: string, input: any, ctx: { userId: strin
     default: {
       // Anything not defined above is assumed to be a Composio-provided tool
       // (e.g. GMAIL_SEND_EMAIL, GOOGLECALENDAR_CREATE_EVENT). web_search never
-      // lands here — Anthropic resolves it server-side before we see a response.
+      // lands here — OpenAI resolves it server-side before we see a response.
       const result = await executeComposioTool(ctx.userId, name, input);
       // Canvas dates are all raw UTC — see localTimes.ts for the bug this fixes.
       if (name.toUpperCase().startsWith("CANVAS")) return addLocalTimes(result, ctx.timezone || env.TIMEZONE);

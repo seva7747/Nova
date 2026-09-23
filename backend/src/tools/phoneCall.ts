@@ -8,10 +8,11 @@ import { placeOutboundCall } from "../services/outboundCall.js";
  * friend and wish them happy birthday," or a reservation equally well.
  */
 export const makePhoneCallTool = {
+  type: "function" as const,
   name: "make_phone_call",
   description:
     "Places a REAL outbound phone call on the user's behalf to accomplish something over the phone — asking a library if they have a book, booking a restaurant reservation, wishing someone happy birthday, anything that genuinely needs a live phone conversation. Nova conducts the ENTIRE call herself once it connects, start to finish — you (the household assistant) don't stay on the line and won't see it happen live. Use web_search first if you need to find a business's phone number; ask the user if you need a personal contact's number and don't already have it. This tool returns immediately once the call is placed — the outcome isn't known yet. Tell the user you're calling now; you'll be able to tell them what happened once it's done (delivered automatically the moment it finishes, or ask again in a bit). If the user gives a correction or a change of detail (\"actually make it 8pm instead\") WHILE a call to that same number is still in progress, do NOT call this tool again for it — check your recent-calls context first; either tell the user that call is already happening and the change will have to wait for the next one, or just note it for later. Calling the same person twice in a row for one request is a real mistake, not a safe default.",
-  input_schema: {
+  parameters: {
     type: "object" as const,
     properties: {
       toNumber: {

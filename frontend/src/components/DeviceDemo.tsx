@@ -20,7 +20,7 @@ export function DeviceDemo() {
       <div className="text-center max-w-lg">
         <h2 className="text-2xl font-bold text-white">Try Nova right here</h2>
         <p className="mt-2 text-sm text-white/50">
-          This runs the real pipeline — GPT-Live-1 for full-duplex voice, Claude with tool-use for the actual
+          This runs the real pipeline — GPT-Live-1 for full-duplex voice, GPT-5.4-mini with tool-use for the actual
           thinking — against whatever accounts you've connected on the{" "}
           <Link to="/connectors" className="text-nova-cyan/80 hover:text-nova-cyan underline underline-offset-2">
             Connectors

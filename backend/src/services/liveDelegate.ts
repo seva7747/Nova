@@ -25,10 +25,10 @@ const MAX_BACKGROUND_STEPS = 12; // outer cap on top of runConversationTurn's ow
  * fires a `session.delegation.created` event instead of answering itself.
  * This function attaches a second ("sideband") WebSocket to that same
  * session — separate from the browser's WebRTC connection, so the OpenAI
- * key and Composio/Anthropic calls never touch the browser — reconstructs
+ * key and Composio/OpenAI calls never touch the browser — reconstructs
  * what the user said from the transcript deltas GPT-Live streamed alongside
  * the delegation, runs it through Nova's EXISTING brain (runConversationTurn:
- * Claude + web search + make_phone_call + Composio's Gmail/Calendar
+ * the brain + web search + make_phone_call + Composio's Gmail/Calendar
  * tools, unchanged from the classic pipeline), and speaks the result back by
  * appending it as "commentary" on that delegation.
  *
@@ -156,13 +156,16 @@ export function attachLiveDelegate(sessionId: string, ctx: { userId: string; tim
         // The main conversation's copy of the paused tool calls now says
         // they were handed off — otherwise the next question's turn would see
         // "Paused here — will resume" and helpfully redo them itself.
-        const last = messages[messages.length - 1];
-        if (Array.isArray(last?.content)) {
-          last.content = last.content.map((b: any) =>
-            b?.type === "tool_result"
-              ? { ...b, content: JSON.stringify({ note: "Handed off to a background task that's running separately — don't redo these; use check_background_tasks for its progress." }) }
-              : b
-          );
+        // Responses items are a flat array, so the paused outputs are the
+        // trailing function_call_output items rather than blocks inside one
+        // message — rewrite each of them, stopping at the first item that
+        // isn't one (that's where this turn's paused batch begins).
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i]?.type !== "function_call_output") break;
+          messages[i] = {
+            ...messages[i],
+            output: JSON.stringify({ note: "Handed off to a background task that's running separately — don't redo these; use check_background_tasks for its progress." }),
+          };
         }
         const task = startTask(ctx.userId, describeRequest(userText, beforeTurn));
         recordProgress(task, turnActions);

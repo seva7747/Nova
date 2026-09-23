@@ -7,17 +7,19 @@ import { getTasks, requestCancel, describeTask } from "../services/tasks.js";
  */
 
 export const checkBackgroundTasksTool = {
+  type: "function" as const,
   name: "check_background_tasks",
   description:
     "See what Nova is working on in the background — call this whenever the user asks what task is running, how it's going, its progress, or whether something's done yet. Returns running tasks (the original request, how long it's been going, how many actions are done, the most recent ones) and recently finished ones with their results. Describe progress in plain words, e.g. \"I've added 7 holidays so far, most recently Labor Day\" — don't read ids out loud.",
-  input_schema: { type: "object" as const, properties: {} },
+  parameters: { type: "object" as const, properties: {} },
 };
 
 export const cancelBackgroundTaskTool = {
+  type: "function" as const,
   name: "cancel_background_task",
   description:
     "Stop a background task — call this when the user says to cancel, stop, or never mind a task that's running. Omit taskId to stop everything running (the normal case — usually there's only one); pass one from check_background_tasks only if several are running and the user named a specific one. It stops after the step already in progress, so a few more actions may still complete — say how many were done.",
-  input_schema: {
+  parameters: {
     type: "object" as const,
     properties: {
       taskId: { type: "string", description: "Only when several tasks are running and the user picked one." },

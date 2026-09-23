@@ -7,13 +7,13 @@ import { localMidnightEpochSeconds } from "../util/time.js";
  * direct access to it entirely.
  *
  * CONFIRMED BY TESTING across several real sessions: exposing the raw tool
- * (9 parameters, several with unhelpful defaults) meant Claude had to build
+ * (9 parameters, several with unhelpful defaults) meant the model had to build
  * a Gmail search query and compute date-range arithmetic itself, fresh,
  * every single time — and it got it wrong often enough to matter: an
  * inconsistent unread count (3, then 1, then 50, real answer 6), "today"
  * lists bleeding an hour into the wrong day, "3 days ago" and specific past
  * dates returning nothing at all, and sent/draft mail being counted as
- * "received." Some of that was Claude's own arithmetic slipping, and some
+ * "received." Some of that was the model's own arithmetic slipping, and some
  * was genuine: Gmail's after:/before: operators interpret a plain
  * YYYY/MM/DD date as midnight in a FIXED reference timezone (confirmed in
  * Google's own docs), not the user's real one — so a query built from the
@@ -23,7 +23,7 @@ import { localMidnightEpochSeconds } from "../util/time.js";
  *
  * Fix: do the parts that are actually arithmetic — day-boundary math, the
  * received-vs-sent filter, picking a sane result size and payload weight —
- * in plain deterministic code, once, here. Claude just says what it means
+ * in plain deterministic code, once, here. The model just says what it means
  * ("3 days ago," "only what I received," "just the count") and this
  * translates that into a correct, unambiguous Gmail query every time. That
  * also means fewer retry round trips, which should feel faster too.
@@ -36,7 +36,7 @@ import { localMidnightEpochSeconds } from "../util/time.js";
  *    matching message, with hasMore already false) was 49. It's called an
  *    "estimate" in Google's own docs for a reason. Fixed by exposing
  *    `countIsExact` (true whenever hasMore is false, meaning every message
- *    was actually returned and counted, not estimated) so Claude has a
+ *    was actually returned and counted, not estimated) so the model has a
  *    reliable signal for when the exact returnedCount can be trusted over
  *    the fuzzy totalMatching.
  *
@@ -51,10 +51,11 @@ import { localMidnightEpochSeconds } from "../util/time.js";
  *    searching everywhere when that's genuinely what's being asked.
  */
 export const gmailSearchTool = {
+  type: "function" as const,
   name: "search_gmail",
   description:
     "Search or count the user's Gmail. Always use this instead of trying to build Gmail search syntax or figure out date ranges yourself — it handles timezones, date-range math, and received-vs-sent filtering correctly. Returns totalMatching (Gmail's own rough ESTIMATE — can be well off, e.g. 201 vs a true 49) alongside returnedCount (the actual number fetched) and countIsExact (true when hasMore is false, meaning returnedCount is the real, complete total — prefer it over totalMatching whenever it's true). Each message includes a ready-to-speak `receivedAt` (already converted to the user's local time) — always use that field when saying when something arrived, not the raw `messageTimestamp` (that one's UTC and will be the wrong hour if read directly). Never state a date or fact about a message that isn't literally in the returned data — summarize what's there, don't estimate or fill in gaps.",
-  input_schema: {
+  parameters: {
     type: "object" as const,
     properties: {
       query: {
@@ -107,11 +108,11 @@ export async function runGmailSearch(input: any, ctx: { userId: string; timezone
   // "the first connected account" (its own SDK logs exactly that) and Nova
   // just answered from whichever one happened to be first, never asking.
   // The system prompt's own "ask which account" instruction (see llm.ts's
-  // buildSystem) is real but unenforced — nothing stops Claude from calling
+  // buildSystem) is real but unenforced — nothing stops the model from calling
   // the tool without following it, which is exactly this project's whole
   // pattern of NOT trusting prompt-following alone for anything that
   // actually matters. Enforced here instead: refuse to guess, and make
-  // Claude ask, whenever it's genuinely ambiguous.
+  // the model ask, whenever it's genuinely ambiguous.
   if (!input.connectedAccountId) {
     const accounts = (await getAccountsByToolkit(ctx.userId)).gmail ?? [];
     if (accounts.length > 1) {
@@ -163,11 +164,11 @@ export async function runGmailSearch(input: any, ctx: { userId: string; timezone
   // CONFIRMED BY TESTING: messageTimestamp comes back as a raw UTC instant
   // (e.g. "2026-09-15T16:20:42Z") — fixing the SEARCH boundaries didn't fix
   // this, because reading a result back out loud is a separate step from
-  // finding it, and Claude was still doing its own UTC-to-local conversion
+  // finding it, and the model was still doing its own UTC-to-local conversion
   // per message rather than reliably subtracting the right offset every
   // time. Converted here instead, once, in code — every message gets an
   // unambiguous, already-local `receivedAt` string, so there's no more
-  // per-message arithmetic left for Claude to get wrong.
+  // per-message arithmetic left for the model to get wrong.
   const messages = (result?.data?.messages ?? []).map((m: any) => {
     const ts = m?.messageTimestamp;
     const parsed = ts ? new Date(ts) : null;

@@ -6,7 +6,7 @@ const TWILIO_API_BASE = "https://api.twilio.com/2010-04-01";
 /**
  * Sends a text via Twilio's REST API. Used for the real reply to an inbound
  * text — the webhook itself already replied instantly with empty TwiML (see
- * routes/sms.ts) so Twilio never waits on a slow Claude/Composio turn — and
+ * routes/sms.ts) so Twilio never waits on a slow brain/Composio turn — and
  * for background-task completions reaching a user well after their original
  * text.
  */

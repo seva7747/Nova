@@ -8,10 +8,11 @@ import { scheduleReminder } from "../services/reminders.js";
  * minutes/hours from right now, not a day on the calendar.
  */
 export const setReminderTool = {
+  type: "function" as const,
   name: "set_reminder",
   description:
     'Sets a short reminder/timer that Nova will proactively speak on her own when it\'s due, with no need for the user to ask again. Use this for "remind me in N seconds/minutes/hours," "set a timer for N minutes," etc. — NOT for anything tied to a specific calendar date (use add_calendar_event for those instead). Once you call this, just acknowledge it normally (e.g. "Okay, I\'ll remind you in 30 seconds") — the actual reminder is delivered separately later, automatically, by speaking the "message" you give here VERBATIM and word-for-word — so keep it plain, short, and exactly what should be said out loud, never a note-to-self or a creative flourish.',
-  input_schema: {
+  parameters: {
     type: "object" as const,
     properties: {
       message: {

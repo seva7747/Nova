@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { env } from "../config.js";
 import { scheduleReminder } from "./reminders.js";
 
-const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 const TWILIO_API_BASE = "https://api.twilio.com/2010-04-01";
 
 /**
@@ -37,10 +37,11 @@ export type OutboundCall = {
 const calls = new Map<string, OutboundCall>();
 
 const finishCallTool = {
+  type: "function" as const,
   name: "finish_call",
   description:
     "Call this the instant you have a real, final result for the objective — success, partial success, or a clear reason it can't be done — or if the call clearly isn't going anywhere (wrong number, no one available) and should end. Always include a short, natural spoken goodbye in your reply TEXT in this SAME response — the call hangs up right after, so this is the last chance to say anything.",
-  input_schema: {
+  parameters: {
     type: "object" as const,
     properties: {
       outcome: {
@@ -206,25 +207,38 @@ export async function runOutboundTurn(call: OutboundCall, humanText: string): Pr
   call.messages.push({ role: "user", content: humanText });
   const system = buildOutboundSystem(call);
 
-  const response = await anthropic.messages.create({
-    model: env.ANTHROPIC_MODEL,
-    max_tokens: 300,
-    system,
+  // "minimal" reasoning, and a bigger token budget than the 300 this used on
+  // the previous brain: a live phone call is the most latency-sensitive path
+  // in the app (dead air on an open line to a stranger), and reasoning
+  // tokens come out of the same budget as the reply itself.
+  const response: any = await openai.responses.create({
+    model: env.OPENAI_BRAIN_MODEL,
+    instructions: system,
+    input: call.messages,
     tools: [finishCallTool],
-    messages: call.messages,
-  });
-  call.messages.push({ role: "assistant", content: response.content });
+    max_output_tokens: 1024,
+    reasoning: { effort: "minimal" },
+  } as any);
+  call.messages.push(...response.output);
 
-  const content = response.content as any[];
-  const finishBlock = content.find((b) => b.type === "tool_use" && b.name === "finish_call");
-  const textReply = content
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
+  const output = response.output as any[];
+  const finishBlock = output.find((b) => b?.type === "function_call" && b.name === "finish_call");
+  const textReply = output
+    .filter((b) => b?.type === "message")
+    .flatMap((b) => (b.content ?? []) as any[])
+    .filter((part) => part?.type === "output_text")
+    .map((part) => part.text)
     .join(" ")
     .trim();
 
   if (finishBlock) {
-    const outcome = String(finishBlock.input?.outcome ?? "The call ended, but I don't have a clear result to report.");
+    let args: any = {};
+    try {
+      args = JSON.parse(finishBlock.arguments || "{}");
+    } catch {
+      args = {};
+    }
+    const outcome = String(args?.outcome ?? "The call ended, but I don't have a clear result to report.");
     finishOutboundCall(call.id, outcome, "completed");
     return { reply: textReply || "Thanks so much, goodbye!", done: true };
   }

@@ -3,13 +3,13 @@ import { env } from "../config.js";
 /**
  * Composio integration.
  *
- * NOTE ON STABILITY: Composio's TypeScript SDK (v3 — `@composio/core` plus a
- * provider package like `@composio/anthropic`) is what most of this file
+ * NOTE ON STABILITY: Composio's TypeScript SDK (v3 — `@composio/core`, whose
+ * built-in OpenAIProvider shapes the tool schemas) is what most of this file
  * targets, and the method names below (`tools.get`, `tools.execute`,
  * `connectedAccounts.list`) reflect their documented shape as of early 2026.
  * Composio evolves this SDK fairly often — if you see a "X is not a
  * function" error pointing at this file, check https://docs.composio.dev
- * (Providers → Anthropic, and the core SDK reference) for the current method
+ * (Providers → OpenAI, and the core SDK reference) for the current method
  * names and adjust the calls below. Everything else in Nova (weather, sports,
  * the restaurant demo) keeps working even if this integration breaks.
  *
@@ -51,11 +51,14 @@ async function getClient(): Promise<any | null> {
   if (!env.COMPOSIO_API_KEY) return null;
   if (!clientPromise) {
     clientPromise = (async () => {
-      const { Composio } = await import("@composio/core");
-      const { AnthropicProvider } = await import("@composio/anthropic");
+      const { Composio, OpenAIProvider } = await import("@composio/core");
       return new Composio({
         apiKey: env.COMPOSIO_API_KEY,
-        provider: new AnthropicProvider(),
+        // OpenAIProvider ships inside @composio/core and is its default, so
+        // this needs no separate provider package (the standalone
+        // @composio/openai releases that match this SDK line peer-depend on
+        // openai@^5, which would pin the backend's SDK backwards).
+        provider: new OpenAIProvider(),
       });
     })();
   }
@@ -78,11 +81,11 @@ const FAILURE_TTL_MS = 60 * 1000;
 // and the 6 newer toolkits' full catalogs run the grand total past 400, most
 // of them obscure (Slack emoji management, Spotify "check saved audiobooks,"
 // etc.) that Nova will never need and that only slow down every turn and
-// increase the odds Claude picks the wrong one. Every toolkit — including
+// increase the odds the model picks the wrong one. Every toolkit — including
 // Gmail/Calendar, which this used to fetch "whole" — is hand-picked down here
 // to a handful of tools that actually cover what someone would ask Nova for.
 const CURATED_TOOLS: Record<string, string[]> = {
-  // GMAIL_FETCH_EMAILS is deliberately excluded — Claude uses the
+  // GMAIL_FETCH_EMAILS is deliberately excluded — the model uses the
   // purpose-built search_gmail tool instead (see tools/gmailSearch.ts),
   // which wraps this exact Composio tool but does the date-range and
   // received/sent-filter logic in code instead of leaving it to the model.
@@ -95,7 +98,7 @@ const CURATED_TOOLS: Record<string, string[]> = {
     "GMAIL_ADD_LABEL_TO_EMAIL",
   ],
   // GOOGLECALENDAR_CREATE_EVENT / QUICK_ADD are deliberately excluded —
-  // Claude uses the purpose-built add_calendar_event tool instead (see
+  // the model uses the purpose-built add_calendar_event tool instead (see
   // tools/calendarEvent.ts), which wraps CREATE_EVENT but checks for an
   // existing same-titled event on that date first, to avoid duplicates.
   GOOGLECALENDAR: [
@@ -158,7 +161,8 @@ const CURATED_TOOLS: Record<string, string[]> = {
 const DYNAMIC_TOOLS_PER_TOOLKIT = 12;
 
 /**
- * Fetch tool definitions (already shaped for Anthropic's tool-use API) for
+ * Fetch tool definitions (shaped by OpenAIProvider into Chat Completions'
+ * nesting, which llm.ts flattens for the Responses API) for
  * whichever toolkits this user actually has an ACTIVE connection for —
  * driven by getAccountsByToolkit, not a fixed list — so connecting any new
  * toolkit through the catalog browser (routes/integrations.ts's /catalog
@@ -187,7 +191,7 @@ export async function getComposioTools(userId: string): Promise<any[]> {
     // `limit` is passed — with no error or warning. Before this file curated
     // specific tool slugs, it fetched Gmail+Calendar "whole" (113 tools
     // combined) and that default cap meant EVERY GOOGLECALENDAR_* tool and
-    // even GMAIL_SEND_EMAIL never made it into the list Claude saw — Gmail
+    // even GMAIL_SEND_EMAIL never made it into the list the model saw — Gmail
     // could only ever be read, never sent from, and calendar scheduling never
     // worked at all. Not a regression from curation work — it was silently
     // broken from the start. Both calls below pass an explicit limit for
@@ -245,7 +249,7 @@ export async function getToolkitCatalog(query: string, cursor?: string): Promise
 
 /**
  * Run a Composio tool (e.g. GMAIL_SEND_EMAIL) on the user's connected account.
- * `connectedAccountId` is a normal argument as far as Claude's tool-calling is
+ * `connectedAccountId` is a normal argument as far as the model's tool-calling is
  * concerned (see patchMultiAccountTools) but isn't part of the real tool's
  * input — pull it out here and pass it as Composio's own execute option
  * instead of forwarding it as a tool argument.
@@ -270,7 +274,7 @@ export async function executeComposioTool(userId: string, toolName: string, args
 // second one exists — so we detect that case and give Nova what she needs to
 // ask "which one?" instead: a human-readable label per account, and an
 // explicit connectedAccountId input patched onto that toolkit's tools so
-// Claude can target the one the user actually meant.
+// the model can target the one the user actually meant.
 
 export type ConnectedAccountSummary = { id: string; label: string };
 
@@ -360,7 +364,7 @@ export async function getAccountsByToolkit(userId: string, skipCache = false): P
   return result;
 }
 
-/** Adds an optional `connectedAccountId` input to every tool belonging to a toolkit that has more than one connected account, so Claude has a normal way to target a specific one. */
+/** Adds an optional `connectedAccountId` input to every tool belonging to a toolkit that has more than one connected account, so the model has a normal way to target a specific one. */
 async function patchMultiAccountTools(tools: any[], userId: string): Promise<any[]> {
   const accountsByToolkit = await getAccountsByToolkit(userId).catch(() => ({}));
   const multiAccountSlugs = Object.entries(accountsByToolkit)
@@ -369,19 +373,27 @@ async function patchMultiAccountTools(tools: any[], userId: string): Promise<any
 
   if (multiAccountSlugs.length === 0) return tools;
 
+  // OpenAIProvider nests the real schema under `function` (name lives there
+  // too), so both the name check and the schema patch have to reach through
+  // it rather than reading the top level as the Anthropic provider allowed.
   return tools.map((tool: any) => {
-    const belongsToMultiAccountToolkit = multiAccountSlugs.some((slug) => String(tool.name ?? "").toUpperCase().startsWith(slug));
+    const fn = tool?.function;
+    if (!fn) return tool;
+    const belongsToMultiAccountToolkit = multiAccountSlugs.some((slug) => String(fn.name ?? "").toUpperCase().startsWith(slug));
     if (!belongsToMultiAccountToolkit) return tool;
     return {
       ...tool,
-      input_schema: {
-        ...tool.input_schema,
-        properties: {
-          ...tool.input_schema?.properties,
-          connectedAccountId: {
-            type: "string",
-            description:
-              "Which connected account to use — the user has more than one for this service (see the account list in your instructions). Ask the user which one if it isn't already clear, then pass that account's id here.",
+      function: {
+        ...fn,
+        parameters: {
+          ...fn.parameters,
+          properties: {
+            ...fn.parameters?.properties,
+            connectedAccountId: {
+              type: "string",
+              description:
+                "Which connected account to use — the user has more than one for this service (see the account list in your instructions). Ask the user which one if it isn't already clear, then pass that account's id here.",
+            },
           },
         },
       },

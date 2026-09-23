@@ -10,9 +10,9 @@ export function EconomicsNote() {
       <h3 className="font-semibold text-white mb-1">The honest economics</h3>
       <p className="text-sm text-white/50 mb-5 max-w-2xl">
         This is a hardware-shaped product with a software-shaped cost problem: the sale is one-time, but OpenAI
-        (GPT-Live-1, $0.05/minute of open voice session), Anthropic, and Composio all bill monthly, for as long as
-        the device is used. (The estimate below predates the GPT-Live-1 switch and is worth re-checking against
-        real usage now that voice is billed per-minute-open rather than per-request.)
+        (GPT-Live-1 at $0.05/minute of open voice session, plus the brain's tokens and searches) and Composio both
+        bill monthly, for as long as the device is used. (The estimate below predates both the GPT-Live-1 switch
+        and the move to an OpenAI brain, and is worth re-checking against real usage.)
       </p>
 
       <div className="flex flex-col gap-2 mb-5">

@@ -154,7 +154,7 @@ async function drainQueue(ws: WebSocket, phoneNumber: string, session: Session) 
  * itself handles speech-to-text and text-to-speech here — same "someone
  * else owns listening/speaking, we only exchange text" shape as
  * liveDelegate.ts (GPT-Live-1) and smsDelegate.ts, just a third transport
- * for the identical Claude+Composio brain underneath.
+ * for the identical brain+Composio stack underneath.
  * Docs: https://www.twilio.com/docs/voice/conversationrelay/websocket-messages
  */
 export function attachVoiceCallDelegate(ws: WebSocket) {

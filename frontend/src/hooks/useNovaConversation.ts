@@ -29,7 +29,7 @@ const STOP_COMMAND = /^(hey[, ]+)?(nova[, ]+)?(ok(ay)?[, ]+)?(please[, ]+)?(stop
 /**
  * Nova's whole voice pipeline is GPT-Live-1 (see useNovaLive.ts for the
  * WebRTC transport, backend/src/services/liveDelegate.ts for how it hands
- * off to Claude + Composio). This hook is the state machine wrapped around
+ * off to the brain + Composio). This hook is the state machine wrapped around
  * that: it gates the paid live session behind a free local wake-word
  * detector, tracks conversation state for the orb/transcript UI, and closes
  * the session again after things go quiet.
@@ -72,8 +72,8 @@ export function useNovaConversation() {
    * doesn't mean "hang up instantly."
    *
    * Deliberately closes on idle EVEN IF a background task is still running —
-   * confirmed this is what's actually wanted: the task itself runs on Claude
-   * Haiku regardless of whether this ($0.05/min) session stays open (see
+   * confirmed this is what's actually wanted: the task itself runs on the
+   * brain model regardless of whether this ($0.05/min) session stays open (see
    * liveDelegate.ts's runBackgroundTask), so there's no reason to keep
    * paying for GPT-Live to sit there listening to silence while it works.
    * The task keeps going in the background either way; see handleDelegation's
@@ -118,7 +118,7 @@ export function useNovaConversation() {
           }
           // CONFIRMED BY TESTING (real feedback): saying "stop" should shut
           // Nova up and hang up immediately — not go through a full
-          // Claude round trip like a normal request, which is both slow and
+          // backend round trip like a normal request, which is both slow and
           // pointless for a plain "be quiet" command. Checked on every delta
           // rather than waiting for the utterance to finish, so it fires the
           // instant enough has been said to match — for a genuine one-word

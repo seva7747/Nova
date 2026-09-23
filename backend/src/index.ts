@@ -25,7 +25,7 @@ app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
     configured: {
-      brain: Boolean(env.ANTHROPIC_API_KEY),
+      brain: Boolean(env.OPENAI_API_KEY),
       composio: Boolean(env.COMPOSIO_API_KEY),
       liveVoice: Boolean(env.OPENAI_API_KEY),
       // Covers both texting and calling Nova — same Twilio number/creds

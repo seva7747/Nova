@@ -10,7 +10,7 @@ const router = Router();
  * Twilio's inbound-SMS webhook — configure this as the "A message comes in"
  * webhook URL on the Twilio number, as `{PUBLIC_BASE_URL}/api/sms/webhook`.
  *
- * Always replies with empty TwiML immediately, before the real Claude +
+ * Always replies with empty TwiML immediately, before the real brain +
  * Composio turn even starts — Twilio times out a webhook after ~15s, and a
  * multi-tool turn can easily take longer (see smsDelegate.ts's own timing
  * logs). The actual answer is sent afterward as a normal outbound text via
