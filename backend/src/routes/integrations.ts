@@ -1,6 +1,13 @@
 import { Router } from "express";
 import { env } from "../config.js";
-import { initiateConnection, getAccountsByToolkit, getToolkitCatalog, getConnectOptions, connectWithCredentials } from "../services/composio.js";
+import {
+  initiateConnection,
+  getAccountsByToolkit,
+  getToolkitCatalog,
+  getConnectOptions,
+  connectWithCredentials,
+  disconnectAccount,
+} from "../services/composio.js";
 import { attachUser } from "./auth.js";
 
 const router = Router();
@@ -83,6 +90,19 @@ router.post("/connect-with-credentials", attachUser, async (req, res) => {
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? "Couldn't complete that connection." });
+  }
+});
+
+/** Disconnects one connected account — the userId is always the verified session's own (attachUser), never client input, so this can only ever act on accounts the caller actually owns (disconnectAccount double-checks this too). */
+router.post("/disconnect", attachUser, async (req, res) => {
+  const userId = (req as any).userId;
+  const { connectedAccountId } = req.body ?? {};
+  if (!connectedAccountId) return res.status(400).json({ error: "connectedAccountId is required" });
+  try {
+    await disconnectAccount(userId, connectedAccountId);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Couldn't disconnect that account." });
   }
 });
 

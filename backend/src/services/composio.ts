@@ -599,3 +599,28 @@ export async function listConnections(userId: string): Promise<any[]> {
     return [];
   }
 }
+
+/**
+ * Disconnects one connected account — lets the Connectors page remove a
+ * single account (e.g. the wrong one of two Gmail addresses) instead of
+ * connecting being a one-way door. `revoke_on_delete=true` also revokes the
+ * OAuth grant at the provider itself (Google, etc.), not just Composio's own
+ * record of it — a real "disconnect," not just hiding it from Nova while the
+ * grant quietly stays active on Google's side.
+ *
+ * CONFIRMED-BY-REASONING security check (same class of bug as /connect's own
+ * userId fix): `connectedAccountId` comes straight from the request body, so
+ * without verifying it's actually one of THIS user's own accounts first, any
+ * signed-in user could delete anyone else's connection just by guessing or
+ * observing an id. listConnections(userId) is the same source of truth the
+ * Connectors page itself renders from, so this check can never be stricter
+ * than what the user can already see is theirs.
+ */
+export async function disconnectAccount(userId: string, connectedAccountId: string): Promise<void> {
+  const mine = await listConnections(userId);
+  if (!mine.some((c: any) => c.id === connectedAccountId)) {
+    throw new Error("That connected account doesn't belong to this user.");
+  }
+  await composioFetch(`/connected_accounts/${encodeURIComponent(connectedAccountId)}?revoke_on_delete=true`, { method: "DELETE" });
+  accountsCache.delete(userId); // so the very next status check reflects the removal, not a stale 60s-old list
+}

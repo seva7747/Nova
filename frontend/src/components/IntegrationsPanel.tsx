@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   connectIntegration,
   connectIntegrationWithCredentials,
+  disconnectIntegration,
   fetchIntegrationStatus,
   fetchConnectorCatalog,
   type CatalogEntry,
@@ -91,6 +92,19 @@ function ConnectorRow({
 }) {
   const [connecting, setConnecting] = useState(false);
   const [pendingForm, setPendingForm] = useState<{ scheme: string; fields: ConnectField[] } | null>(null);
+  const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+
+  const handleDisconnect = async (account: Account) => {
+    if (!window.confirm(`Disconnect ${account.label}? Nova won't be able to use it until you reconnect it.`)) return;
+    setDisconnectingId(account.id);
+    try {
+      const result = await disconnectIntegration(account.id);
+      if (result.error) alert(result.error);
+      else onRefresh();
+    } finally {
+      setDisconnectingId(null);
+    }
+  };
 
   const handleConnect = async () => {
     setConnecting(true);
@@ -137,9 +151,19 @@ function ConnectorRow({
       {accounts.length > 0 && (
         <div className="mt-2.5 flex flex-col gap-1.5 border-t border-white/5 pt-2.5">
           {accounts.map((a) => (
-            <div key={a.id} className="flex items-center gap-1.5 text-xs text-nova-cyan">
-              <span className="w-1.5 h-1.5 rounded-full bg-nova-cyan shrink-0" />
-              <span className="text-white/70 truncate">{a.label}</span>
+            <div key={a.id} className="flex items-center justify-between gap-2 text-xs text-nova-cyan">
+              <div className="min-w-0 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-nova-cyan shrink-0" />
+                <span className="text-white/70 truncate">{a.label}</span>
+              </div>
+              <button
+                onClick={() => handleDisconnect(a)}
+                disabled={disconnectingId === a.id}
+                className="shrink-0 text-white/30 hover:text-red-400 disabled:opacity-40 transition px-1"
+                title={`Disconnect ${a.label}`}
+              >
+                {disconnectingId === a.id ? "..." : "✕"}
+              </button>
             </div>
           ))}
         </div>

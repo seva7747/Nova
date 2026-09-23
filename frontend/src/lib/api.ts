@@ -38,6 +38,16 @@ export async function connectIntegrationWithCredentials(
   return resp.json();
 }
 
+/** Disconnects one connected account (e.g. the wrong one of two Gmail addresses) — also revokes the OAuth grant at the provider itself, not just Composio's record of it. */
+export async function disconnectIntegration(connectedAccountId: string): Promise<{ success?: true; error?: string }> {
+  const resp = await fetch(`${API_BASE}/api/integrations/disconnect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ connectedAccountId }),
+  });
+  return resp.json();
+}
+
 export type CatalogEntry = { slug: string; name: string; logo?: string; description?: string };
 export type CatalogPage = { items: CatalogEntry[]; nextCursor: string | null };
 
